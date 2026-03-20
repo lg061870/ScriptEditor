@@ -1,0 +1,1396 @@
+@page "/"
+@using System.Linq
+@using System.Text.Json
+@using ScriptEditor.Models
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Script Editor</PageTitle>
+
+<div class="editor-shell" data-editor-root @ref="_editorRoot">
+    <header class="top-bar">
+        <div class="top-bar__spacer"></div>
+        <div class="top-bar__title">
+            <span class="top-bar__muted">ScriptCore.AI</span>
+            <span class="top-bar__divider">/</span>
+            <span class="top-bar__badge">◈</span>
+            <span class="top-bar__active">Script Editor</span>
+        </div>
+        <div class="top-bar__actions">
+            <button class="icon-pill" type="button" @onclick="DuplicateActiveScriptAsync" title="Duplicate script">⎘</button>
+            <button class="icon-pill" type="button" @onclick="CreateScriptAsync" title="New script">＋</button>
+            <button class="icon-pill" type="button" @onclick="SaveWorkspaceAsync" title="Save workspace">💾</button>
+            <button class="profile-dot" type="button" aria-label="Profile"></button>
+        </div>
+    </header>
+
+    <section class="scripts-bar" aria-label="Script tabs">
+        <div class="scripts-tabs">
+            @foreach (var script in _workspace.Scripts)
+            {
+                <button type="button" class="script-tab @(IsActiveScript(script.Id) ? "script-tab--active" : string.Empty)" @onclick="() => SelectScriptAsync(script.Id)">
+                    <span>@script.Id</span>
+                    @if (_workspace.Scripts.Count > 1)
+                    {
+                        <span class="tab-close" title="Close script" @onclick:stopPropagation="true" @onclick="() => CloseScriptAsync(script.Id)">×</span>
+                    }
+                </button>
+            }
+            <button type="button" class="script-add" title="New script" @onclick="CreateScriptAsync">＋</button>
+        </div>
+        <div class="scripts-actions">
+            <button type="button" @onclick="DuplicateActiveScriptAsync">Duplicate</button>
+            <div class="layout-direction-group" role="radiogroup" aria-label="Layout direction">
+                <label>
+                    <input type="radio" name="layout-direction" value="vertical" checked="@(_layoutDirection == "vertical")" @onchange="OnLayoutDirectionChanged" />
+                    Vertical
+                </label>
+                <label>
+                    <input type="radio" name="layout-direction" value="horizontal" checked="@(_layoutDirection == "horizontal")" @onchange="OnLayoutDirectionChanged" />
+                    Horizontal
+                </label>
+            </div>
+            <div class="align-menu">
+                <button type="button" @onclick="ToggleAlignMenu">Align ▾</button>
+                @if (_isAlignMenuOpen)
+                {
+                    <div class="align-menu__panel">
+                        @if (_layoutDirection == "vertical")
+                        {
+                            <button type="button" @onclick="AlignVerticalAsync">Align Vertically</button>
+                            <button type="button" @onclick="AlignHorizontalAsync">Align Horizontally</button>
+                        }
+                        else
+                        {
+                            <button type="button" @onclick="AlignHorizontalAsync">Align Horizontally</button>
+                            <button type="button" @onclick="AlignVerticalAsync">Align Vertically</button>
+                        }
+
+                    </div>
+                }
+            </div>
+            <button type="button" @onclick="SaveWorkspaceAsync">Save Workspace</button>
+        </div>
+    </section>
+
+    <div class="workspace-shell">
+        <aside class="icon-rail">
+            <button type="button" class="icon-rail__btn is-active" aria-label="Search">⌕</button>
+            <button type="button" class="icon-rail__btn" aria-label="Network">⌘</button>
+            <button type="button" class="icon-rail__btn" aria-label="Edit">✎</button>
+            <button type="button" class="icon-rail__btn" aria-label="Layers">⌗</button>
+            <button type="button" class="icon-rail__btn" aria-label="File">◫</button>
+        </aside>
+
+        <aside class="component-panel">
+            <div class="search-wrap">
+                <span>⌕</span>
+                <input type="text" value="Search" readonly />
+                <kbd>/</kbd>
+            </div>
+
+            <div class="panel-title">
+                <span>Components</span>
+                <button type="button">⚙</button>
+            </div>
+
+            <nav class="component-list">
+                <a href="#">⌥ Input / Output</a>
+                <a href="#">◉ Agents</a>
+                <a href="#">◎ Models</a>
+                <a href="#">◌ Data</a>
+                <a href="#">☰ Processing</a>
+                <a href="#">⇄ Logic</a>
+                <a href="#">⌬ Helpers</a>
+            </nav>
+
+            <button class="discover-btn" type="button">▣ Discover more components</button>
+
+            <div class="activities-section">
+                <div class="activities-section__title">
+                    <span>Activities</span>
+                    <span class="activities-section__hint">Drag to canvas</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="chat-input" role="button" tabindex="0" aria-label="ChatInput">
+                    <span class="activity-item__icon">⧉</span>
+                    <span>ChatInput</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="chat-output" role="button" tabindex="0" aria-label="ChatOutput">
+                    <span class="activity-item__icon">▤</span>
+                    <span>ChatOutput</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="delay" role="button" tabindex="0" aria-label="DelayActivity">
+                    <span class="activity-item__icon">⏱</span>
+                    <span>DelayActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="simple-activity" role="button" tabindex="0" aria-label="SimpleActivity">
+                    <span class="activity-item__icon">◇</span>
+                    <span>SimpleActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="repeat-activity" role="button" tabindex="0" aria-label="RepeatActivity">
+                    <span class="activity-item__icon">↻</span>
+                    <span>RepeatActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="composite-activity" role="button" tabindex="0" aria-label="CompositeActivity">
+                    <span class="activity-item__icon">▦</span>
+                    <span>CompositeActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="wait-for-user-input" role="button" tabindex="0" aria-label="WaitForUserInputActivity">
+                    <span class="activity-item__icon">⌨</span>
+                    <span>WaitForUserInput</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="semantic-response" role="button" tabindex="0" aria-label="SemanticResponseActivity">
+                    <span class="activity-item__icon">◉</span>
+                    <span>SemanticResponse</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="prompt-activity" role="button" tabindex="0" aria-label="PromptActivity">
+                    <span class="activity-item__icon">✎</span>
+                    <span>PromptActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="adaptive-card-activity" role="button" tabindex="0" aria-label="AdaptiveCardActivity">
+                    <span class="activity-item__icon">▣</span>
+                    <span>AdaptiveCardActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="conditional-quick-answer" role="button" tabindex="0" aria-label="ConditionalActivityQuickAnswer">
+                    <span class="activity-item__icon">?</span>
+                    <span>Conditional&lt;QuickAnswer&gt;</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="quick-answer" role="button" tabindex="0" aria-label="QuickAnswerActivity">
+                    <span class="activity-item__icon">☑</span>
+                    <span>QuickAnswer</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="conditional-trigger-topic" role="button" tabindex="0" aria-label="ConditionalActivityTriggerTopic">
+                    <span class="activity-item__icon">⎇</span>
+                    <span>Conditional&lt;TriggerTopic&gt;</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="trigger-topic" role="button" tabindex="0" aria-label="TriggerTopicActivity">
+                    <span class="activity-item__icon">⇢</span>
+                    <span>TriggerTopic</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="choice-activity" role="button" tabindex="0" aria-label="ChoiceActivity">
+                    <span class="activity-item__icon">☰</span>
+                    <span>ChoiceActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="complete-topic-activity" role="button" tabindex="0" aria-label="CompleteTopicActivity">
+                    <span class="activity-item__icon">✓</span>
+                    <span>CompleteTopicActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="conditional-activity" role="button" tabindex="0" aria-label="ConditionalActivity">
+                    <span class="activity-item__icon">⎇</span>
+                    <span>ConditionalActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="decision-activity" role="button" tabindex="0" aria-label="DecisionActivity">
+                    <span class="activity-item__icon">◇</span>
+                    <span>DecisionActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="dump-ctx-activity" role="button" tabindex="0" aria-label="DumpCtxActivity">
+                    <span class="activity-item__icon">⌗</span>
+                    <span>DumpCtxActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="end-activity" role="button" tabindex="0" aria-label="EndActivity">
+                    <span class="activity-item__icon">■</span>
+                    <span>EndActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="escalate-activity" role="button" tabindex="0" aria-label="EscalateActivity">
+                    <span class="activity-item__icon">!</span>
+                    <span>EscalateActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="event-trigger-activity" role="button" tabindex="0" aria-label="EventTriggerActivity">
+                    <span class="activity-item__icon">⚡</span>
+                    <span>EventTriggerActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="execute-topic-activity" role="button" tabindex="0" aria-label="ExecuteTopicActivity">
+                    <span class="activity-item__icon">⇲</span>
+                    <span>ExecuteTopicActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="fallback-activity" role="button" tabindex="0" aria-label="FallbackActivity">
+                    <span class="activity-item__icon">↩</span>
+                    <span>FallbackActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="for-each-activity" role="button" tabindex="0" aria-label="ForEachActivity">
+                    <span class="activity-item__icon">⋯</span>
+                    <span>ForEachActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="global-variable-activity" role="button" tabindex="0" aria-label="GlobalVariableActivity">
+                    <span class="activity-item__icon">◎</span>
+                    <span>GlobalVariableActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="greeting-activity" role="button" tabindex="0" aria-label="GreetingActivity">
+                    <span class="activity-item__icon">G</span>
+                    <span>GreetingActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="insurance-decision-activity" role="button" tabindex="0" aria-label="InsuranceDecisionActivity">
+                    <span class="activity-item__icon">⬢</span>
+                    <span>InsuranceDecisionActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="interactive-activity" role="button" tabindex="0" aria-label="InteractiveActivity">
+                    <span class="activity-item__icon">⌨</span>
+                    <span>InteractiveActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="multiple-topics-matched-activity" role="button" tabindex="0" aria-label="MultipleTopicsMatchedActivity">
+                    <span class="activity-item__icon">≋</span>
+                    <span>MultipleTopicsMatchedActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="on-error-activity" role="button" tabindex="0" aria-label="OnErrorActivity">
+                    <span class="activity-item__icon">⚠</span>
+                    <span>OnErrorActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="parallel-activity" role="button" tabindex="0" aria-label="ParallelActivity">
+                    <span class="activity-item__icon">∥</span>
+                    <span>ParallelActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="prompt-attention-activity" role="button" tabindex="0" aria-label="ChatPromptAttentionActivity">
+                    <span class="activity-item__icon">✦</span>
+                    <span>PromptAttentionActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="reset-activity" role="button" tabindex="0" aria-label="ResetActivity">
+                    <span class="activity-item__icon">↺</span>
+                    <span>ResetActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="semantic-query-activity" role="button" tabindex="0" aria-label="SemanticQueryActivity">
+                    <span class="activity-item__icon">◌</span>
+                    <span>SemanticQueryActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="set-variable-activity" role="button" tabindex="0" aria-label="SetVariableActivity">
+                    <span class="activity-item__icon">=</span>
+                    <span>SetVariableActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="show-suggestions-activity" role="button" tabindex="0" aria-label="ShowSuggestionsActivity">
+                    <span class="activity-item__icon">⋮</span>
+                    <span>ShowSuggestionsActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="sign-in-activity" role="button" tabindex="0" aria-label="SignInActivity">
+                    <span class="activity-item__icon">⇥</span>
+                    <span>SignInActivity</span>
+                </div>
+                <div class="activity-item" draggable="true" data-activity-template="switch-activity" role="button" tabindex="0" aria-label="SwitchActivity">
+                    <span class="activity-item__icon">⎇</span>
+                    <span>SwitchActivity</span>
+                </div>
+            </div>
+
+            <div class="panel-footer">
+                <button type="button" @onclick="CreateScriptAsync">＋ New Script</button>
+                <button type="button" @onclick="SaveWorkspaceAsync">⌂ Save</button>
+            </div>
+        </aside>
+
+        <section class="canvas-scroller">
+            <div class="canvas-stage" data-editor-stage>
+                <div class="canvas-content" data-editor-content>
+                    <div class="canvas-surface">
+                        <svg class="connections" viewBox="0 0 6000 6000" preserveAspectRatio="none" aria-hidden="true"></svg>
+                        <div class="nodes-layer" data-nodes-layer></div>
+            </div>
+                </div>
+
+                <div class="zoom-badge" aria-label="Zoom controls">
+                    <button type="button" class="zoom-btn" data-zoom-out>-</button>
+                    <span data-zoom-value>100%</span>
+                    <button type="button" class="zoom-btn" data-zoom-in>+</button>
+                    <button type="button" class="zoom-reset" data-zoom-reset>Reset</button>
+                </div>
+            </div>
+        </section>
+
+        <aside class="inspector-panel">
+            <div class="inspector-header">
+                <span>Inspector</span>
+                <span class="activities-section__hint">Script + Node</span>
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Script Id</label>
+                <input class="inspector-input" value="@_activeScriptNameDraft" @oninput="OnActiveScriptNameInput" />
+                <button type="button" class="inspector-button" @onclick="ApplyActiveScriptNameAsync">Rename Script</button>
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Target Project</label>
+
+                <label class="inspector-sub-label">Project Folder</label>
+                <input class="inspector-input" value="@_targetProjectFolderDraft" @oninput="OnTargetProjectFolderInput" placeholder="C:\Path\To\ScriptCoreWebApp" />
+
+                <div class="inspector-actions-row inspector-actions-row--stack">
+                    <button type="button" class="inspector-button" @onclick="UseCurrentWorkspaceFolder">Use ScriptEditor Folder</button>
+                    <button type="button" class="inspector-button" @onclick="VerifyConversaCoreWiringAsync">Verify ConversaCore Wiring</button>
+                </div>
+
+                @if (_targetProjectChecks.Count == 0)
+                {
+                    <div class="inspector-empty">No verification has run yet.</div>
+                }
+                else
+                {
+                    <ul class="target-check-list">
+                        @foreach (var check in _targetProjectChecks)
+                        {
+                            <li class="target-check-item target-check-item--@check.SeverityCss">
+                                <span class="target-check-code">@check.Code</span>
+                                <span class="target-check-message">@check.Message</span>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <div class="json-status @(_isTargetProjectValid ? "json-status--ok" : "json-status--error")">@_targetProjectStatus</div>
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Drag/Drop Diagnostics</label>
+                <div class="inspector-actions-row">
+                    <button type="button" class="inspector-button" @onclick="() => RefreshDndDiagnosticsAsync()">Refresh</button>
+                    <button type="button" class="inspector-button" @onclick="ResetDndDiagnosticsAsync">Reset</button>
+                </div>
+
+                <div class="dnd-stats-grid">
+                    <div class="dnd-stat-item"><span>Pointer down</span><strong>@_dndDebug.PointerDownCount</strong></div>
+                    <div class="dnd-stat-item"><span>Drag start</span><strong>@_dndDebug.DragStartCount</strong></div>
+                    <div class="dnd-stat-item"><span>Drag enter</span><strong>@_dndDebug.DragEnterCount</strong></div>
+                    <div class="dnd-stat-item"><span>Drag over</span><strong>@_dndDebug.DragOverCount</strong></div>
+                    <div class="dnd-stat-item"><span>Drops</span><strong>@_dndDebug.DropCount</strong></div>
+                    <div class="dnd-stat-item"><span>Accepted</span><strong>@_dndDebug.DropAcceptedCount</strong></div>
+                    <div class="dnd-stat-item"><span>Rejected (missing template)</span><strong>@_dndDebug.DropRejectedMissingTemplateCount</strong></div>
+                    <div class="dnd-stat-item"><span>Rejected (unknown template)</span><strong>@_dndDebug.DropRejectedUnknownTemplateCount</strong></div>
+                    <div class="dnd-stat-item"><span>Drag end</span><strong>@_dndDebug.DragEndCount</strong></div>
+                </div>
+
+                <div class="inspector-kv"><strong>Init started:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.InitStartedAt) ? "n/a" : _dndDebug.InitStartedAt)</div>
+                <div class="inspector-kv"><strong>Init ready:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.InitReadyAt) ? "n/a" : _dndDebug.InitReadyAt)</div>
+                <div class="inspector-kv"><strong>Init elapsed (ms):</strong> @(_dndDebug.InitElapsedMs?.ToString() ?? "n/a")</div>
+                <div class="inspector-kv"><strong>Init parse done:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.InitParseDoneAt) ? "n/a" : _dndDebug.InitParseDoneAt)</div>
+                <div class="inspector-kv"><strong>Init parse elapsed (ms):</strong> @(_dndDebug.InitParseElapsedMs?.ToString() ?? "n/a")</div>
+                <div class="inspector-kv"><strong>Listeners ready:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.InitListenersReadyAt) ? "n/a" : _dndDebug.InitListenersReadyAt)</div>
+                <div class="inspector-kv"><strong>Listeners ready elapsed (ms):</strong> @(_dndDebug.InitListenersElapsedMs?.ToString() ?? "n/a")</div>
+                <div class="inspector-kv"><strong>Restore started:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.RestoreStartedAt) ? "n/a" : _dndDebug.RestoreStartedAt)</div>
+                <div class="inspector-kv"><strong>Restore done:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.RestoreDoneAt) ? "n/a" : _dndDebug.RestoreDoneAt)</div>
+                <div class="inspector-kv"><strong>Restore elapsed (ms):</strong> @(_dndDebug.RestoreElapsedMs?.ToString() ?? "n/a")</div>
+                <div class="inspector-kv"><strong>Blazor after render:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.BlazorAfterRenderAt) ? "n/a" : _dndDebug.BlazorAfterRenderAt)</div>
+                <div class="inspector-kv"><strong>Before initialize:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.BeforeInitializeAt) ? "n/a" : _dndDebug.BeforeInitializeAt)</div>
+                <div class="inspector-kv"><strong>After initialize invoke:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.AfterInitializeInvokeAt) ? "n/a" : _dndDebug.AfterInitializeInvokeAt)</div>
+
+                <div class="inspector-kv"><strong>Last template:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.LastTemplate) ? "none" : _dndDebug.LastTemplate)</div>
+                <div class="inspector-kv"><strong>Last update:</strong> @(string.IsNullOrWhiteSpace(_dndDebug.LastUpdatedAt) ? "n/a" : _dndDebug.LastUpdatedAt)</div>
+
+                @if (_dndDebug.RecentEvents.Count == 0)
+                {
+                    <div class="inspector-empty">No drag/drop events captured yet.</div>
+                }
+                else
+                {
+                    <ul class="dnd-event-list">
+                        @foreach (var entry in _dndDebug.RecentEvents)
+                        {
+                            <li class="dnd-event-item">
+                                <div class="dnd-event-head">
+                                    <span class="dnd-event-type">@entry.Type</span>
+                                    <span class="dnd-event-time">@entry.At</span>
+                                </div>
+                                <div class="dnd-event-detail">@entry.Detail</div>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <div class="json-status @(_isDndDebugValid ? "json-status--ok" : "json-status--error")">@_dndDebugStatus</div>
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Selected Node</label>
+                @if (SelectedNode is null)
+                {
+                    <div class="inspector-empty">Select a node on the canvas to inspect and edit it.</div>
+                }
+                else
+                {
+                    <div class="inspector-kv"><strong>Node:</strong> @_selectedNodeIdDraft</div>
+                    <div class="inspector-kv"><strong>Position:</strong> (@Math.Round(SelectedNode.X), @Math.Round(SelectedNode.Y))</div>
+
+                    <label class="inspector-sub-label">Node Id</label>
+                    <input class="inspector-input" @bind="_selectedNodeIdDraft" />
+
+                    <label class="inspector-sub-label">Activity Type</label>
+                    <input class="inspector-input" @bind="_selectedNodeTypeDraft" />
+
+                    <label class="inspector-sub-label">Display Name (optional)</label>
+                    <input class="inspector-input" value="@_selectedNodeNameDraft" @oninput="OnSelectedNodeNameInput" />
+
+                    <label class="inspector-checkbox">
+                        <input type="checkbox" checked="@_selectedNodeCollapsedDraft" @onchange="OnSelectedNodeCollapsedChanged" />
+                        <span>Collapsed</span>
+                    </label>
+                    <label class="inspector-sub-label">Context Reads (comma-separated)</label>
+                    <input class="inspector-input" @bind="_selectedNodeReadsDraft" />
+
+                    <label class="inspector-sub-label">Context Writes (comma-separated)</label>
+                    <input class="inspector-input" @bind="_selectedNodeWritesDraft" />
+
+                    <label class="inspector-sub-label">Configuration Data (JSON object)</label>
+                    <textarea class="inspector-textarea" spellcheck="false" @bind="_selectedNodeDataJsonDraft"></textarea>
+
+                    <label class="inspector-sub-label">Ports (JSON array)</label>
+                    <textarea class="inspector-textarea" spellcheck="false" @bind="_selectedNodePortsJsonDraft"></textarea>
+
+                    <div class="inspector-actions-row">
+                        <button type="button" class="inspector-button" @onclick="ApplySelectedNodeEditsAsync">Apply Node Changes</button>
+                        <button type="button" class="inspector-button" @onclick="ResetSelectedNodeDrafts">Reset</button>
+                    </div>
+                    <div class="json-status @(_isNodeEditorValid ? "json-status--ok" : "json-status--error")">@_nodeEditorStatus</div>
+                }
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Adaptive Definitions</label>
+
+                <label class="inspector-sub-label">Card Definitions (JSON array)</label>
+                <textarea class="inspector-textarea" spellcheck="false" @bind="_adaptiveCardsJsonDraft"></textarea>
+
+                <label class="inspector-sub-label">Model Definitions (JSON array)</label>
+                <textarea class="inspector-textarea" spellcheck="false" @bind="_adaptiveModelsJsonDraft"></textarea>
+
+                <button type="button" class="inspector-button" @onclick="ApplyAdaptiveDefinitionEditsAsync">Apply Adaptive Definitions</button>
+                <div class="json-status @(_isAdaptiveDefsValid ? "json-status--ok" : "json-status--error")">@_adaptiveDefsStatus</div>
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Validation</label>
+                <div class="validation-summary @ValidationSummaryClass">
+                    <span>Errors: @ValidationErrorCount</span>
+                    <span>Warnings: @ValidationWarningCount</span>
+                </div>
+                @if (_validationIssues.Count == 0)
+                {
+                    <div class="inspector-empty">No validation issues.</div>
+                }
+                else
+                {
+                    <ul class="validation-list">
+                        @foreach (var issue in _validationIssues)
+                        {
+                            <li class="validation-item @(issue.Severity == DiagramValidationSeverity.Error ? "validation-item--error" : "validation-item--warning")">
+                                <span class="validation-code">@issue.Code</span>
+                                <span class="validation-message">@issue.Message</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="inspector-group">
+                <label class="inspector-label">Context Flow</label>
+                @if (_contextUsages.Count == 0)
+                {
+                    <div class="inspector-empty">No context reads or writes are defined yet.</div>
+                }
+                else
+                {
+                    <div class="context-toolbar">
+                        @if (!string.IsNullOrWhiteSpace(_focusedContextVariable))
+                        {
+                            <button type="button" class="inspector-button" @onclick="ClearContextFocusAsync">Clear Focus</button>
+                        }
+                    </div>
+                    <ul class="context-list">
+                        @foreach (var usage in _contextUsages)
+                        {
+                            var isFocused = string.Equals(_focusedContextVariable, usage.Name, StringComparison.OrdinalIgnoreCase);
+                            <li class="context-item @(isFocused ? "context-item--focused" : string.Empty)">
+                                <button type="button" class="context-focus-btn" @onclick="() => FocusContextVariableAsync(usage.Name)">
+                                    <span class="context-name">@usage.Name</span>
+                                    <span class="context-counts">R:@usage.Readers.Count W:@usage.Writers.Count</span>
+                                </button>
+                                <div class="context-meta"><strong>Readers:</strong> @(usage.Readers.Count == 0 ? "none" : string.Join(", ", usage.Readers))</div>
+                                <div class="context-meta"><strong>Writers:</strong> @(usage.Writers.Count == 0 ? "none" : string.Join(", ", usage.Writers))</div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="json-section inspector-json">
+                <div class="json-section__title">
+                    <span>Script JSON</span>
+                    <span class="activities-section__hint">Live sync</span>
+                </div>
+                <textarea class="json-editor" spellcheck="false" value="@_diagramJson" @oninput="OnDiagramJsonInput"></textarea>
+                <div class="json-status @(_isJsonValid ? "json-status--ok" : "json-status--error")">@_jsonStatus</div>
+            </div>
+        </aside>
+    </div>
+            </div>
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+
+    private ElementReference _editorRoot;
+    private DotNetObjectReference<Home>? _dotNetRef;
+
+    private EditorWorkspace _workspace = EditorWorkspaceFactory.CreateDefault();
+    private string _diagramJson = string.Empty;
+    private string _jsonStatus = "Editor is ready.";
+    private bool _isJsonValid = true;
+    private bool _editorInitialized;
+    private string _layoutDirection = "vertical";
+    private bool _isAlignMenuOpen;
+    private string? _selectedNodeId;
+    private string _activeScriptNameDraft = string.Empty;
+    private List<DiagramValidationIssue> _validationIssues = [];
+
+    private string _selectedNodeIdDraft = string.Empty;
+    private string _selectedNodeTypeDraft = string.Empty;
+    private string _selectedNodeNameDraft = string.Empty;
+    private bool _selectedNodeCollapsedDraft;
+    private string _selectedNodeReadsDraft = string.Empty;
+    private string _selectedNodeWritesDraft = string.Empty;
+    private string _selectedNodeDataJsonDraft = "{}";
+    private string _selectedNodePortsJsonDraft = "[]";
+    private string _nodeEditorStatus = "Select a node to edit.";
+    private bool _isNodeEditorValid = true;
+    private List<ContextVariableUsage> _contextUsages = [];
+    private string? _focusedContextVariable;
+
+    private WorkspaceScript ActiveScript
+    {
+        get
+        {
+            if (_workspace.Scripts.Count == 0)
+            {
+                _workspace = EditorWorkspaceFactory.CreateDefault();
+            }
+
+            var active = _workspace.Scripts.FirstOrDefault(s => string.Equals(s.Id, _workspace.ActiveScriptId, StringComparison.Ordinal));
+            if (active is not null)
+            {
+                return active;
+            }
+
+            _workspace.ActiveScriptId = _workspace.Scripts[0].Id;
+            return _workspace.Scripts[0];
+        }
+    }
+
+    private DiagramDocument ActiveDocument => ActiveScript.Document;
+
+    private DiagramNode? SelectedNode => string.IsNullOrWhiteSpace(_selectedNodeId)
+        ? null
+        : ActiveDocument.Nodes.FirstOrDefault(n => string.Equals(n.Id, _selectedNodeId, StringComparison.Ordinal));
+
+    private int ValidationErrorCount => _validationIssues.Count(v => v.Severity == DiagramValidationSeverity.Error);
+
+    private int ValidationWarningCount => _validationIssues.Count(v => v.Severity == DiagramValidationSeverity.Warning);
+
+    private string ValidationSummaryClass => ValidationErrorCount > 0 ? "validation-summary--error" : "validation-summary--ok";
+
+    private sealed class ContextVariableUsage
+    {
+        public required string Name { get; init; }
+
+        public List<string> Readers { get; init; } = [];
+
+        public List<string> Writers { get; init; } = [];
+    }
+
+    protected override void OnInitialized()
+    {
+        _diagramJson = Serialize(ActiveDocument);
+        _activeScriptNameDraft = ActiveScript.Id;
+        PopulateTargetProjectDrafts();
+        RevalidateActiveScript();
+        PopulateSelectedNodeDrafts();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await JS.InvokeVoidAsync("scriptEditor.mark", "blazor-after-render");
+        await JS.InvokeVoidAsync("scriptEditor.mark", "restore-start");
+        await TryRestoreWorkspaceAsync();
+        await JS.InvokeVoidAsync("scriptEditor.mark", "restore-done");
+
+        _dotNetRef = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("scriptEditor.mark", "before-initialize");
+        await JS.InvokeVoidAsync("scriptEditor.initialize", _editorRoot, _diagramJson, _dotNetRef);
+        await JS.InvokeVoidAsync("scriptEditor.mark", "after-initialize-invoke");
+        await JS.InvokeVoidAsync("scriptEditor.setLayoutDirection", _editorRoot, _layoutDirection);
+        _editorInitialized = true;
+        await ApplyContextFocusAsync();
+        await RefreshDndDiagnosticsAsync(silent: true);
+    }
+
+    private async Task TryRestoreWorkspaceAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(750));
+            var raw = await JS.InvokeAsync<string?>("localStorage.getItem", cancellationToken: cts.Token, "scriptEditor.workspace");
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return;
+            }
+
+            var parsed = JsonSerializer.Deserialize<EditorWorkspace>(raw, JsonOptions);
+            if (parsed is null || parsed.Scripts.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var script in parsed.Scripts)
+            {
+                script.Document ??= EditorWorkspaceFactory.CreateEmptyScriptDocument();
+            }
+
+            _workspace = parsed;
+            if (!_workspace.Scripts.Any(s => string.Equals(s.Id, _workspace.ActiveScriptId, StringComparison.Ordinal)))
+            {
+                _workspace.ActiveScriptId = _workspace.Scripts[0].Id;
+            }
+
+            _activeScriptNameDraft = ActiveScript.Id;
+            PopulateTargetProjectDrafts();
+            _diagramJson = Serialize(ActiveDocument);
+            RevalidateActiveScript();
+            PopulateSelectedNodeDrafts();
+            _jsonStatus = "Restored workspace from browser storage.";
+        }
+        catch
+        {
+            _jsonStatus = "Unable to restore a saved workspace; using default script.";
+            RevalidateActiveScript();
+            PopulateSelectedNodeDrafts();
+        }
+    }
+
+    private bool IsActiveScript(string scriptId)
+    {
+        return string.Equals(_workspace.ActiveScriptId, scriptId, StringComparison.Ordinal);
+    }
+
+    private async Task SelectScriptAsync(string scriptId)
+    {
+        if (!_workspace.Scripts.Any(s => string.Equals(s.Id, scriptId, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        _workspace.ActiveScriptId = scriptId;
+        _selectedNodeId = null;
+        _activeScriptNameDraft = ActiveScript.Id;
+        _diagramJson = Serialize(ActiveDocument);
+        _isJsonValid = true;
+        _jsonStatus = $"Active script: {scriptId}";
+        RevalidateActiveScript();
+        PopulateSelectedNodeDrafts();
+
+        if (_editorInitialized)
+        {
+            await JS.InvokeVoidAsync("scriptEditor.applyDocument", _editorRoot, _diagramJson);
+            await ApplyContextFocusAsync();
+        }
+    }
+
+    private async Task CreateScriptAsync()
+    {
+        var nextId = EditorWorkspaceFactory.GenerateNextScriptId(_workspace.Scripts);
+        _workspace.Scripts.Add(new WorkspaceScript
+        {
+            Id = nextId,
+            Document = EditorWorkspaceFactory.CreateEmptyScriptDocument()
+        });
+
+        await SelectScriptAsync(nextId);
+    }
+
+    private async Task DuplicateActiveScriptAsync()
+    {
+        var copyId = EditorWorkspaceFactory.GenerateNextScriptId(_workspace.Scripts, $"{ActiveScript.Id}Copy");
+        _workspace.Scripts.Add(new WorkspaceScript
+        {
+            Id = copyId,
+            Document = EditorWorkspaceFactory.CloneDocument(ActiveDocument)
+        });
+
+        await SelectScriptAsync(copyId);
+    }
+
+    private async Task CloseScriptAsync(string scriptId)
+    {
+        if (_workspace.Scripts.Count <= 1)
+        {
+            _jsonStatus = "At least one script must remain open.";
+            return;
+        }
+
+        var script = _workspace.Scripts.FirstOrDefault(s => string.Equals(s.Id, scriptId, StringComparison.Ordinal));
+        if (script is null)
+        {
+            return;
+        }
+
+        var closingActive = string.Equals(_workspace.ActiveScriptId, scriptId, StringComparison.Ordinal);
+        _workspace.Scripts.Remove(script);
+
+        if (closingActive)
+        {
+            await SelectScriptAsync(_workspace.Scripts[0].Id);
+        }
+        else
+        {
+            _jsonStatus = $"Closed script: {scriptId}";
+            RevalidateActiveScript();
+            PopulateSelectedNodeDrafts();
+        }
+    }
+    private void ToggleAlignMenu()
+    {
+        _isAlignMenuOpen = !_isAlignMenuOpen;
+    }
+
+
+    private Task AlignVerticalAsync() => AlignDiagramAsync("vertical");
+
+    private Task AlignHorizontalAsync() => AlignDiagramAsync("horizontal");
+
+    private async Task AlignDiagramAsync(string mode)
+    {
+        if (!_editorInitialized)
+        {
+            _isJsonValid = false;
+            _jsonStatus = "Editor is still initializing; please try again in a moment.";
+            return;
+        }
+
+        var layoutMode = string.Equals(mode, "vertical", StringComparison.OrdinalIgnoreCase) ? "vertical" : "horizontal";
+
+        try
+        {
+            await JS.InvokeVoidAsync("scriptEditor.setLayoutDirection", _editorRoot, layoutMode);
+            var arranged = await JS.InvokeAsync<bool>("scriptEditor.arrange", _editorRoot, layoutMode);
+            if (!arranged)
+            {
+                _isJsonValid = false;
+                _jsonStatus = "Layout engine is unavailable in the browser context.";
+                return;
+            }
+
+            _isAlignMenuOpen = false;
+            _isJsonValid = true;
+            _jsonStatus = $"Arranged diagram ({layoutMode}) at {DateTime.Now:HH:mm:ss}.";
+        }
+        catch (Exception ex)
+        {
+            _isJsonValid = false;
+            _jsonStatus = $"Arrange diagram failed: {ex.Message}";
+        }
+    }
+
+    private async Task OnLayoutDirectionChanged(ChangeEventArgs args)
+    {
+        _layoutDirection = string.Equals(args.Value?.ToString(), "horizontal", StringComparison.OrdinalIgnoreCase)
+            ? "horizontal"
+            : "vertical";
+
+        if (_editorInitialized)
+        {
+            await JS.InvokeVoidAsync("scriptEditor.setLayoutDirection", _editorRoot, _layoutDirection);
+            var arranged = await JS.InvokeAsync<bool>("scriptEditor.arrange", _editorRoot, _layoutDirection);
+            if (!arranged)
+            {
+                _isJsonValid = false;
+                _jsonStatus = "Layout direction changed, but the layout engine is unavailable in the browser context.";
+                return;
+            }
+        }
+
+        _isAlignMenuOpen = false;
+        _jsonStatus = $"Layout direction set to {_layoutDirection} and diagram arranged.";
+        _isJsonValid = true;
+    }
+
+    private async Task SaveWorkspaceAsync()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(_workspace, JsonOptions);
+            await JS.InvokeVoidAsync("localStorage.setItem", "scriptEditor.workspace", json);
+            _jsonStatus = $"Workspace saved at {DateTime.Now:HH:mm:ss}";
+            _isJsonValid = true;
+        }
+        catch (Exception ex)
+        {
+            _jsonStatus = $"Could not save workspace: {ex.Message}";
+            _isJsonValid = false;
+        }
+    }
+
+    private async Task ApplyActiveScriptNameAsync()
+    {
+        var nextName = (_activeScriptNameDraft ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(nextName))
+        {
+            _jsonStatus = "Script id cannot be empty.";
+            _isJsonValid = false;
+            return;
+        }
+
+        if (_workspace.Scripts.Any(s => !ReferenceEquals(s, ActiveScript) && string.Equals(s.Id, nextName, StringComparison.OrdinalIgnoreCase)))
+        {
+            _jsonStatus = $"A script named '{nextName}' already exists.";
+            _isJsonValid = false;
+            return;
+        }
+
+        ActiveScript.Id = nextName;
+        _workspace.ActiveScriptId = nextName;
+        _activeScriptNameDraft = nextName;
+        _jsonStatus = $"Renamed active script to '{nextName}'.";
+        _isJsonValid = true;
+
+        await SaveWorkspaceAsync();
+    }
+
+    private void OnActiveScriptNameInput(ChangeEventArgs args)
+    {
+        _activeScriptNameDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task OnSelectedNodeNameInput(ChangeEventArgs args)
+    {
+        _selectedNodeNameDraft = args.Value?.ToString() ?? string.Empty;
+        await ApplySelectedNodeVisualDraftsAsync(rearrange: false);
+    }
+
+    private async Task OnSelectedNodeCollapsedChanged(ChangeEventArgs args)
+    {
+        _selectedNodeCollapsedDraft = args.Value switch
+        {
+            bool boolValue => boolValue,
+            string stringValue => string.Equals(stringValue, "true", StringComparison.OrdinalIgnoreCase),
+            _ => string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase)
+        };
+
+        await ApplySelectedNodeVisualDraftsAsync(rearrange: true);
+    }
+
+    private async Task ApplySelectedNodeVisualDraftsAsync(bool rearrange)
+    {
+        var node = SelectedNode;
+        if (node is null)
+        {
+            return;
+        }
+
+        node.Name = string.IsNullOrWhiteSpace(_selectedNodeNameDraft) ? null : _selectedNodeNameDraft.Trim();
+        node.Collapsed = _selectedNodeCollapsedDraft;
+
+        _diagramJson = Serialize(ActiveDocument);
+        RevalidateActiveScript();
+
+        if (_editorInitialized)
+        {
+            var updated = await JS.InvokeAsync<bool>(
+                "scriptEditor.updateNodeVisuals",
+                _editorRoot,
+                node.Id,
+                node.Name ?? string.Empty,
+                node.Collapsed,
+                rearrange);
+
+            if (!updated)
+            {
+                await JS.InvokeVoidAsync("scriptEditor.applyDocument", _editorRoot, _diagramJson);
+                await JS.InvokeVoidAsync("scriptEditor.setLayoutDirection", _editorRoot, _layoutDirection);
+
+                if (rearrange)
+                {
+                    var arranged = await JS.InvokeAsync<bool>("scriptEditor.arrange", _editorRoot, _layoutDirection);
+                    if (!arranged)
+                    {
+                        _isJsonValid = false;
+                        _jsonStatus = "Updated node visuals, but the layout engine is unavailable in the browser context.";
+                        return;
+                    }
+                }
+            }
+
+            await ApplyContextFocusAsync();
+        }
+
+        _isJsonValid = true;
+    }
+
+    private async Task OnDiagramJsonInput(ChangeEventArgs args)
+    {
+        _diagramJson = args.Value?.ToString() ?? string.Empty;
+
+        if (!TryParse(_diagramJson, out var parsed, out var error))
+        {
+            _isJsonValid = false;
+            _jsonStatus = $"Invalid JSON: {error}";
+            return;
+        }
+
+        ActiveScript.Document = parsed;
+        _isJsonValid = true;
+        _jsonStatus = $"Applied from JSON at {DateTime.Now:HH:mm:ss}";
+        RevalidateActiveScript();
+
+        if (_selectedNodeId is not null && ActiveDocument.Nodes.All(n => !string.Equals(n.Id, _selectedNodeId, StringComparison.Ordinal)))
+        {
+            _selectedNodeId = null;
+        }
+
+        PopulateSelectedNodeDrafts();
+
+        if (_editorInitialized)
+        {
+            await JS.InvokeVoidAsync("scriptEditor.applyDocument", _editorRoot, _diagramJson);
+            await JS.InvokeVoidAsync("scriptEditor.setLayoutDirection", _editorRoot, _layoutDirection);
+            var arranged = await JS.InvokeAsync<bool>("scriptEditor.arrange", _editorRoot, _layoutDirection);
+            if (!arranged)
+            {
+                _isJsonValid = false;
+                _jsonStatus = "Applied JSON, but the layout engine is unavailable in the browser context.";
+                return;
+            }
+
+            await ApplyContextFocusAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnCanvasDocumentChanged(string documentJson)
+    {
+        _diagramJson = documentJson;
+
+        if (TryParse(documentJson, out var parsed, out var error))
+        {
+            ActiveScript.Document = parsed;
+            _isJsonValid = true;
+            _jsonStatus = $"Canvas synced at {DateTime.Now:HH:mm:ss}";
+            RevalidateActiveScript();
+
+            if (_selectedNodeId is not null && ActiveDocument.Nodes.All(n => !string.Equals(n.Id, _selectedNodeId, StringComparison.Ordinal)))
+            {
+                _selectedNodeId = null;
+                PopulateSelectedNodeDrafts();
+            }
+        }
+        else
+        {
+            _isJsonValid = false;
+            _jsonStatus = $"Canvas sent invalid JSON: {error}";
+        }
+
+        await ApplyContextFocusAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnCanvasNodeSelected(string nodeId)
+    {
+        _selectedNodeId = string.IsNullOrWhiteSpace(nodeId) ? null : nodeId;
+
+        if (_selectedNodeId is not null && ActiveDocument.Nodes.All(n => !string.Equals(n.Id, _selectedNodeId, StringComparison.Ordinal)))
+        {
+            _selectedNodeId = null;
+        }
+
+        PopulateSelectedNodeDrafts();
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ApplySelectedNodeEditsAsync()
+    {
+        var node = SelectedNode;
+        if (node is null)
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = "No node is selected.";
+            return;
+        }
+
+        var nextId = (_selectedNodeIdDraft ?? string.Empty).Trim();
+        var nextType = (_selectedNodeTypeDraft ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(nextId))
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = "Node id cannot be empty.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(nextType))
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = "Activity type cannot be empty.";
+            return;
+        }
+
+        if (ActiveDocument.Nodes.Any(n => !ReferenceEquals(n, node) && string.Equals(n.Id, nextId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = $"A node with id '{nextId}' already exists.";
+            return;
+        }
+
+        if (!TryParseNodeData(_selectedNodeDataJsonDraft, out var parsedData, out var dataError))
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = $"Configuration JSON is invalid: {dataError}";
+            return;
+        }
+
+        if (!TryParsePorts(_selectedNodePortsJsonDraft, out var parsedPorts, out var portsError))
+        {
+            _isNodeEditorValid = false;
+            _nodeEditorStatus = $"Ports JSON is invalid: {portsError}";
+            return;
+        }
+
+        var oldNodeId = node.Id;
+
+        node.Id = nextId;
+        node.Type = nextType;
+        node.Name = string.IsNullOrWhiteSpace(_selectedNodeNameDraft) ? null : _selectedNodeNameDraft.Trim();
+        node.Collapsed = _selectedNodeCollapsedDraft;
+        node.Data = parsedData;
+        node.Ports = parsedPorts;
+        node.Context = new DiagramContextUsage
+        {
+            Reads = ParseCsvList(_selectedNodeReadsDraft),
+            Writes = ParseCsvList(_selectedNodeWritesDraft)
+        };
+
+        if (!string.Equals(oldNodeId, nextId, StringComparison.Ordinal))
+        {
+            foreach (var edge in ActiveDocument.Edges)
+            {
+                if (string.Equals(edge.From.Node, oldNodeId, StringComparison.Ordinal))
+                {
+                    edge.From.Node = nextId;
+                }
+
+                if (edge.To is not null && string.Equals(edge.To.Node, oldNodeId, StringComparison.Ordinal))
+                {
+                    edge.To.Node = nextId;
+                }
+            }
+
+            _selectedNodeId = nextId;
+        }
+
+        _diagramJson = Serialize(ActiveDocument);
+        RevalidateActiveScript();
+        PopulateSelectedNodeDrafts();
+
+        _isNodeEditorValid = true;
+        _nodeEditorStatus = $"Node '{nextId}' updated at {DateTime.Now:HH:mm:ss}.";
+
+        if (_editorInitialized)
+        {
+            await JS.InvokeVoidAsync("scriptEditor.applyDocument", _editorRoot, _diagramJson);
+            await ApplyContextFocusAsync();
+        }
+    }
+
+    private void ResetSelectedNodeDrafts()
+    {
+        PopulateSelectedNodeDrafts();
+    }
+
+    private void PopulateSelectedNodeDrafts()
+    {
+        var node = SelectedNode;
+        if (node is null)
+        {
+            _selectedNodeIdDraft = string.Empty;
+            _selectedNodeTypeDraft = string.Empty;
+            _selectedNodeNameDraft = string.Empty;
+            _selectedNodeCollapsedDraft = false;
+            _selectedNodeReadsDraft = string.Empty;
+            _selectedNodeWritesDraft = string.Empty;
+            _selectedNodeDataJsonDraft = "{}";
+            _selectedNodePortsJsonDraft = "[]";
+            _isNodeEditorValid = true;
+            _nodeEditorStatus = "Select a node to edit.";
+            return;
+        }
+
+        _selectedNodeIdDraft = node.Id;
+        _selectedNodeTypeDraft = node.Type;
+        _selectedNodeNameDraft = node.Name ?? string.Empty;
+        _selectedNodeCollapsedDraft = node.Collapsed;
+        _selectedNodeReadsDraft = string.Join(", ", node.Context.Reads);
+        _selectedNodeWritesDraft = string.Join(", ", node.Context.Writes);
+        _selectedNodeDataJsonDraft = JsonSerializer.Serialize(node.Data, JsonOptions);
+        _selectedNodePortsJsonDraft = JsonSerializer.Serialize(node.Ports, JsonOptions);
+        _isNodeEditorValid = true;
+        _nodeEditorStatus = "Edit fields and apply to update this node.";
+    }
+
+    private async Task FocusContextVariableAsync(string variableName)
+    {
+        _focusedContextVariable = string.IsNullOrWhiteSpace(variableName) ? null : variableName.Trim();
+        await ApplyContextFocusAsync();
+    }
+
+    private async Task ClearContextFocusAsync()
+    {
+        _focusedContextVariable = null;
+        await ApplyContextFocusAsync();
+    }
+
+    private async Task ApplyContextFocusAsync()
+    {
+        if (!_editorInitialized)
+        {
+            return;
+        }
+
+        await JS.InvokeVoidAsync("scriptEditor.setContextFocus", _editorRoot, _focusedContextVariable ?? string.Empty);
+    }
+
+    private static List<ContextVariableUsage> BuildContextUsages(DiagramDocument document)
+    {
+        var map = new Dictionary<string, (HashSet<string> Readers, HashSet<string> Writers)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var node in document.Nodes)
+        {
+            foreach (var read in node.Context.Reads.Where(r => !string.IsNullOrWhiteSpace(r)))
+            {
+                var name = read.Trim();
+                if (!map.TryGetValue(name, out var usage))
+                {
+                    usage = (new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
+                    map[name] = usage;
+                }
+
+                usage.Readers.Add(node.Id);
+            }
+
+            foreach (var write in node.Context.Writes.Where(w => !string.IsNullOrWhiteSpace(w)))
+            {
+                var name = write.Trim();
+                if (!map.TryGetValue(name, out var usage))
+                {
+                    usage = (new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
+                    map[name] = usage;
+                }
+
+                usage.Writers.Add(node.Id);
+            }
+        }
+
+        return map
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => new ContextVariableUsage
+            {
+                Name = pair.Key,
+                Readers = pair.Value.Readers.OrderBy(id => id, StringComparer.Ordinal).ToList(),
+                Writers = pair.Value.Writers.OrderBy(id => id, StringComparer.Ordinal).ToList()
+            })
+            .ToList();
+    }
+
+    private static List<string> ParseCsvList(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return [];
+        }
+
+        return raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static bool TryParseNodeData(string rawJson, out Dictionary<string, string> data, out string error)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(rawJson) ? "{}" : rawJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                data = [];
+                error = "Expected a JSON object.";
+                return false;
+            }
+
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                var key = property.Name.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                result[key] = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString() ?? string.Empty,
+                    JsonValueKind.Null => string.Empty,
+                    _ => property.Value.GetRawText()
+                };
+            }
+
+            data = result;
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            data = [];
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryParsePorts(string rawJson, out List<DiagramPort> ports, out string error)
+    {
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<List<DiagramPort>>(string.IsNullOrWhiteSpace(rawJson) ? "[]" : rawJson, JsonOptions) ?? [];
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var port in parsed)
+            {
+                port.Id = (port.Id ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(port.Id))
+                {
+                    ports = [];
+                    error = "Each port must include a non-empty 'id'.";
+                    return false;
+                }
+
+                if (!seen.Add(port.Id))
+                {
+                    ports = [];
+                    error = $"Port id '{port.Id}' is duplicated in the node.";
+                    return false;
+                }
+
+                port.Name = string.IsNullOrWhiteSpace(port.Name) ? port.Id : port.Name.Trim();
+                port.Direction = string.Equals(port.Direction, "output", StringComparison.OrdinalIgnoreCase) ? "output" : "input";
+                port.Type = string.IsNullOrWhiteSpace(port.Type) ? "string" : port.Type.Trim().ToLowerInvariant();
+                port.Position = string.IsNullOrWhiteSpace(port.Position)
+                    ? (port.Direction == "output" ? "right" : "left")
+                    : port.Position.Trim().ToLowerInvariant();
+            }
+
+            ports = parsed;
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ports = [];
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryParse(string json, out DiagramDocument document, out string error)
+    {
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<DiagramDocument>(json, JsonOptions);
+            if (parsed is null)
+            {
+                document = new DiagramDocument();
+                error = "Document is empty.";
+                return false;
+            }
+
+            parsed.Nodes ??= [];
+            parsed.Edges ??= [];
+            parsed.Cards ??= [];
+            parsed.Models ??= [];
+            parsed.Viewport ??= new DiagramViewport();
+
+            document = parsed;
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            document = new DiagramDocument();
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static string Serialize(DiagramDocument document)
+    {
+        return JsonSerializer.Serialize(document, JsonOptions);
+    }
+
+    private void RevalidateActiveScript()
+    {
+        _validationIssues = DiagramValidator.Validate(ActiveDocument);
+        _contextUsages = BuildContextUsages(ActiveDocument);
+        PopulateAdaptiveDefinitionDrafts();
+
+        if (!string.IsNullOrWhiteSpace(_focusedContextVariable) && !_contextUsages.Any(u => string.Equals(u.Name, _focusedContextVariable, StringComparison.OrdinalIgnoreCase)))
+        {
+            _focusedContextVariable = null;
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

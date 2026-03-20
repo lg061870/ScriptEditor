@@ -1,0 +1,23 @@
+# Build outputs
+bin/
+obj/
+
+# User/tooling folders
+.vs/
+.vscode/
+.idea/
+
+# Local caches created in this workspace
+.codex-build-out/
+.dotnet/
+.nuget/
+.templateengine/
+
+# User-specific project files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs
+*.log

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InsuranceSemanticV2\ConversaCore\ConversaCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Activities\Base\**\*.cs" />
+    <Compile Include="Activities\Base\Interfaces\ITopicTriggeredActivity.cs" />
+    <Compile Include="Activities\Base\Interfaces\ICustomEventTriggeredActivity.cs" />
+  </ItemGroup>
+
+</Project>

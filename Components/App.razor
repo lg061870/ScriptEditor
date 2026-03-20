@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["ScriptEditor.styles.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_content/ScriptEditor/editor/core/ports.js"></script>
+    <script src="_content/ScriptEditor/editor/core/normalize.js"></script>
+    <script src="_content/ScriptEditor/editor/core/types.js"></script>
+    <script src="_content/ScriptEditor/layoutEngine.js"></script>
+    <script src="_content/ScriptEditor/editor/rendering/renderPorts.js"></script>
+    <script src="_content/ScriptEditor/editor/rendering/renderEdges.js"></script>
+    <script src="_content/ScriptEditor/editor/rendering/renderNode.js"></script>
+    <script>
+        // Safety fallback so JSInterop calls won't throw if the main bundle is still loading.
+        window.scriptEditor = window.scriptEditor || {};
+        window.scriptEditor.mark = window.scriptEditor.mark || function (label) {
+            const now = Date.now();
+            const iso = new Date(now).toISOString();
+            return { ts: now, iso };
+        };
+        // Defer Blazor JSInterop calls until editor.js has registered the real functions.
+        const __seCallWhenReady = (fn, args) => new Promise((resolve) => {
+            const tryCall = () => {
+                if (window.scriptEditor && window.scriptEditor.__ready && typeof window.scriptEditor[fn] === 'function') {
+                    Promise.resolve(window.scriptEditor[fn](...args)).then(resolve);
+                    return;
+                }
+                setTimeout(tryCall, 25);
+            };
+            tryCall();
+        });
+        ["initialize","setLayoutDirection","arrange","align","applyDocument","updateNodeVisuals","setContextFocus","getDndDebugStats","resetDndDebugStats"]
+          .forEach((fn)=>{
+            if (typeof window.scriptEditor[fn] !== 'function') {
+              window.scriptEditor[fn] = (...args)=>__seCallWhenReady(fn, args);
+            }
+          });
+        // Fallback loader: if assets don't mark ready shortly, try root-relative paths.
+        setTimeout(() => {
+            if (window.scriptEditor && window.scriptEditor.__ready) return;
+            const fallbackScripts = [
+              "editor/core/ports.js",
+              "editor/core/normalize.js",
+              "editor/core/types.js",
+              "layoutEngine.js",
+              "editor/rendering/renderPorts.js",
+              "editor/rendering/renderEdges.js",
+              "editor/rendering/renderNode.js",
+              "editor.js"
+            ];
+            fallbackScripts.forEach(path => {
+              const s = document.createElement("script");
+              s.src = "/" + path;
+              document.body.appendChild(s);
+            });
+        }, 200);
+    </script>
+    <script src="_content/ScriptEditor/editor.js"></script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>
