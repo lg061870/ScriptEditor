@@ -299,20 +299,23 @@
       const typeKey = normalizeTypeKey(node.type);
       const inputExceptions = new Set(['chat-input']);
       const outputExceptions = new Set(['chat-output','end-activity']);
-      const controlInExceptions = new Set(['chat-input']);
-      const controlOutExceptions = new Set(['chat-output','end-activity']);
+      const controlExceptions = new Set(['chat-input','chat-output','end-activity']);
       const isControlPort = (p)=>String(p?.name??'').toLowerCase().includes('control')||String(p?.id??'').toLowerCase().includes('control')||String(p?.type??'').toLowerCase()==='control';
       const hasInput = node.ports.some((p)=>p.direction==='input'&&!isControlPort(p));
       const hasOutput = node.ports.some((p)=>p.direction==='output'&&!isControlPort(p)&&!String(p?.name??'').toLowerCase().includes('exception'));
-      const hasControlInput = node.ports.some((p)=>p.direction==='input'&&isControlPort(p));
-      const hasControlOutput = node.ports.some((p)=>p.direction==='output'&&isControlPort(p));
+      const controlPorts = node.ports.filter((p)=>isControlPort(p));
+      if (controlPorts.length > 1) {
+          const keepControl = controlPorts.find((p)=>p.direction==='output') || controlPorts[0];
+          node.ports = node.ports.filter((p)=>!isControlPort(p) || p === keepControl);
+      }
+      const hasControl = node.ports.some((p)=>isControlPort(p));
       if(!hasInput && !inputExceptions.has(typeKey)){
           node.ports.push(window.EditorPorts.normPort({
               id: `${node.id}-in`,
               name: 'Input',
               direction: 'input',
               type: 'string',
-              position: 'custom-right-50',
+              position: 'custom-left-50',
               portGender: 'female'
           }, i, node.ports.length));
       }
@@ -326,23 +329,13 @@
               portGender: 'male'
           }, i, node.ports.length));
       }
-      if(!hasControlInput && !controlInExceptions.has(typeKey)){
+      if(!hasControl && !controlExceptions.has(typeKey)){
           node.ports.push(window.EditorPorts.normPort({
-              id: `${node.id}-control-in`,
-              name: 'Control',
-              direction: 'input',
-              type: 'control',
-              position: 'custom-top-75',
-              portGender: 'female'
-          }, i, node.ports.length));
-      }
-      if(!hasControlOutput && !controlOutExceptions.has(typeKey)){
-          node.ports.push(window.EditorPorts.normPort({
-              id: `${node.id}-control-out`,
+              id: `${node.id}-control`,
               name: 'Control',
               direction: 'output',
               type: 'control',
-              position: 'custom-top-25',
+              position: 'custom-top-50',
               portGender: 'male'
           }, i, node.ports.length));
       }
@@ -369,7 +362,7 @@
           }
 
           if (isControl) {
-              port.position = dir === 'output' ? 'custom-top-25' : 'custom-top-75';
+              port.position = 'custom-top-50';
               return;
           }
 
@@ -379,7 +372,7 @@
           }
 
           if (dir === 'input' && (name === 'input' || id.endsWith('-in'))) {
-              port.position = 'custom-right-50';
+              port.position = 'custom-left-50';
           }
       });
 

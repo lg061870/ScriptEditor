@@ -173,7 +173,7 @@
     const normalizeTypeKey = (type) => String(type ?? '').trim().toLowerCase();
     const PORT_HOLD_MS = 320;
     const PORT_CONNECT_MOVE_THRESHOLD = 6;
-    const PORT_CONNECT_SNAP_RADIUS = 24;
+    const PORT_CONNECT_SNAP_RADIUS = 40;
     const EXCEPTION_PORT_EXCLUDED_TYPES = new Set(['on-error-activity', 'onerroractivity']);
     const shouldAddExceptionPort = (nodeType) => !EXCEPTION_PORT_EXCLUDED_TYPES.has(normalizeTypeKey(nodeType));
 
@@ -559,6 +559,25 @@
     }
     function decorateNodeElement(el) {
         if (!(el instanceof HTMLElement)) return;
+        const header = el.querySelector('.node-header');
+        if (header instanceof HTMLElement && !header.querySelector('.node-header-actions')) {
+            const actions = document.createElement('div');
+            actions.className = 'node-header-actions';
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'node-delete';
+            deleteBtn.dataset.nodeDelete = 'true';
+            deleteBtn.title = 'Delete node';
+            deleteBtn.setAttribute('aria-label', 'Delete node');
+            deleteBtn.textContent = '×';
+            actions.appendChild(deleteBtn);
+
+            const play = header.querySelector('.node-play');
+            if (play instanceof HTMLElement) actions.appendChild(play);
+            header.appendChild(actions);
+        }
+
         if (!el.querySelector('.node-resize-handle')) {
             const handle = document.createElement('span');
             handle.className = 'node-resize-handle';
@@ -577,7 +596,11 @@
         const selected = nodesLayer.querySelector(`.node[data-node-id="${selEsc(state.selectedNodeId)}"]`);
         if (selected instanceof HTMLElement) selected.classList.add('is-selected');
     }
-    function applyInvalidPortStyle() { }
+    function applyInvalidPortStyle() {
+        if (!state?.invalidPortId) return;
+        const port = portById(state.invalidPortId);
+        if (port) port.classList.add('port-invalid');
+    }
     function applyContextFocusStyles() { }
     function notifyNow() {
         if (!state?.dotNetRef || !state?.doc) return;
@@ -606,14 +629,22 @@
             window.clearTimeout(state.portHoldTimer);
             state.portHoldTimer = null;
         }
+        setConnectHover(null);
+        setResizeCursorActive(false);
+        if (state.resizeNodeId) {
+            setNodeResizingState(state.resizeNodeId, false);
+        }
         state.pointerId = null;
         state.mode = null;
         state.activePortId = null;
         state.activePortNodeId = null;
         state.activePortDirection = null;
         state.connectFromPortId = null;
+        state.connectEdgeId = null;
+        state.reconnectEdge = null;
         state.activeConnectTargetId = null;
         state.hoverInputPortId = null;
+        state.resizeNodeId = null;
         if (stage instanceof HTMLElement) {
             stage.style.cursor = '';
         }
@@ -667,6 +698,43 @@
         node.data[key] = field.value;
         if (event.type !== 'input') scheduleNotify();
     }
+    function onDeleteNodeClick(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const nodeEl = asElement(event.currentTarget)?.closest('.node[data-node-id]');
+        const nodeId = nodeEl?.dataset?.nodeId;
+        if (!nodeId) return;
+        removeNode(nodeId);
+    }
+    function onResizeHandleDown(event) {
+        if (!state || event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const nodeEl = asElement(event.currentTarget)?.closest('.node[data-node-id]');
+        if (!(nodeEl instanceof HTMLElement)) return;
+        const nodeId = nodeEl.dataset.nodeId;
+        const node = nodeId ? nodeById(nodeId) : null;
+        if (!node || !nodeId) return;
+
+        selectNode(nodeId);
+
+        const startWidth = node.width ?? nodeEl.offsetWidth;
+        const startHeight = node.height ?? nodeEl.offsetHeight;
+        setNodeSize(nodeId, startWidth, startHeight);
+        setResizeCursorActive(true);
+        setNodeResizingState(nodeId, true);
+
+        state.pointerId = event.pointerId;
+        state.mode = 'resize';
+        state.resizeNodeId = nodeId;
+        state.startClientX = event.clientX;
+        state.startClientY = event.clientY;
+        state.resizeStartWidth = startWidth;
+        state.resizeStartHeight = startHeight;
+        state.resizeMinWidth = minNodeWidth(node.type);
+        state.resizeMinHeight = minNodeHeight(node.type);
+        setCapture(event.pointerId);
+    }
     function onPortDown(event) {
         if (!state || event.button !== 0) return;
         const portId = event.currentTarget?.dataset?.portId;
@@ -678,6 +746,8 @@
     function bindNode(el) {
         if (!(el instanceof HTMLElement)) return;
         el.addEventListener('pointerdown', onNodeDown);
+        el.querySelector('[data-node-delete="true"]')?.addEventListener('click', onDeleteNodeClick);
+        el.querySelector('[data-node-resize="true"]')?.addEventListener('pointerdown', onResizeHandleDown);
         el.querySelectorAll('.node-field-input, .node-field-textarea').forEach((field) => {
             field.addEventListener('input', onNodeFieldInput);
             field.addEventListener('change', onNodeFieldInput);
@@ -762,11 +832,30 @@
             renderAll();
             return;
         }
+        if (state.mode === 'resize' && state.resizeNodeId) {
+            const zoom = num(state.doc.viewport.zoom, 1) || 1;
+            const nextWidth = Math.round(clamp(
+                state.resizeStartWidth + (dx / zoom),
+                state.resizeMinWidth,
+                1500
+            ));
+            const nextHeight = Math.round(clamp(
+                state.resizeStartHeight + (dy / zoom),
+                state.resizeMinHeight,
+                1200
+            ));
+            setNodeSize(state.resizeNodeId, nextWidth, nextHeight);
+            renderAll();
+            return;
+        }
         if (state.mode === 'port-hold') {
             if (Math.hypot(dx, dy) >= PORT_CONNECT_MOVE_THRESHOLD) {
-                clearPortHoldTimer();
-                state.mode = 'port-drag';
-                if (stage instanceof HTMLElement) stage.style.cursor = 'grabbing';
+                const startedConnect = beginConnectFromActivePort(event.clientX, event.clientY);
+                if (!startedConnect) {
+                    clearPortHoldTimer();
+                    state.mode = 'port-drag';
+                    if (stage instanceof HTMLElement) stage.style.cursor = 'grabbing';
+                }
             }
             return;
         }
@@ -784,14 +873,82 @@
                     renderAll();
                 }
             }
+            return;
+        }
+        if (state.mode === 'connect') {
+            const targetPort = resolveInputPortTarget(
+                event.clientX,
+                event.clientY,
+                state.connectFromPortId,
+                state.connectEdgeId
+            );
+            const targetPortId = targetPort?.dataset?.portId ?? null;
+            setConnectHover(targetPortId);
+            if (targetPort) {
+                const snapped = portPoint(targetPort);
+                if (snapped) {
+                    state.previewX = snapped.x;
+                    state.previewY = snapped.y;
+                }
+            } else {
+                const world = worldFromClient(event.clientX, event.clientY);
+                state.previewX = world.x;
+                state.previewY = world.y;
+            }
+            renderEdges();
         }
     }
     function onUp(event) {
         const mode = state?.mode;
-        if (mode === 'pan' || mode === 'drag' || mode === 'port-drag') {
+        let needsEdgeRefresh = false;
+        if (mode === 'connect') {
+            const target = resolveInputPortTarget(
+                event.clientX,
+                event.clientY,
+                state.connectFromPortId,
+                state.connectEdgeId
+            );
+            const targetPortId =
+                target?.dataset?.portId ||
+                state.hoverInputPortId ||
+                state.activeConnectTargetId ||
+                null;
+            finishConnect(targetPortId);
+            setConnectHover(null);
+            renderEdges();
+            scheduleNotify();
+            needsEdgeRefresh = true;
+        }
+        if (mode === 'port-hold') {
+            const movedDistance = Math.hypot(event.clientX - state.startClientX, event.clientY - state.startClientY);
+            if (movedDistance < PORT_CONNECT_MOVE_THRESHOLD) {
+                const startedConnect = beginConnectFromActivePort(event.clientX, event.clientY);
+                if (startedConnect) {
+                    const target = resolveInputPortTarget(
+                        event.clientX,
+                        event.clientY,
+                        state.connectFromPortId,
+                        state.connectEdgeId
+                    );
+                    const targetPortId =
+                target?.dataset?.portId ||
+                state.hoverInputPortId ||
+                state.activeConnectTargetId ||
+                null;
+            finishConnect(targetPortId);
+                    renderEdges();
+                    scheduleNotify();
+                }
+            }
+        }
+        if (mode === 'pan' || mode === 'drag' || mode === 'port-drag' || mode === 'resize') {
             scheduleNotify();
         }
+        clearPortHoldTimer();
         clearInteraction(event?.pointerId ?? null);
+        if (needsEdgeRefresh) {
+            renderEdges();
+        }
     }
     function onWheel(event) {
         if (!state || !stage) return;
@@ -906,6 +1063,90 @@
         }
         return null;
     }
+
+    function canAttach(portId, currentEdgeId) {
+        return !state.doc.edges.some((edge) => edge.to === portId && edge.id !== currentEdgeId);
+    }
+
+    function canConnectPorts(fromPortId, toPortId, currentEdgeId = null) {
+        const source = portMeta(fromPortId);
+        const target = portMeta(toPortId);
+        if (!source || !target) return false;
+        if (source.port.direction !== 'output' || target.port.direction !== 'input') return false;
+        if (!typesCompatible(source.port.type, target.port.type)) return false;
+        return canAttach(toPortId, currentEdgeId);
+    }
+
+    function clearConnectHover() {
+        if (!(nodesLayer instanceof Element)) return;
+        nodesLayer.querySelectorAll('.port.port-connect-target').forEach((port) => {
+            port.classList.remove('port-connect-target');
+        });
+        nodesLayer.querySelectorAll('.port-match').forEach((port) => {
+            port.classList.remove('port-match');
+        });
+    }
+
+    function setConnectHover(portId) {
+        if (state.hoverInputPortId === portId) return;
+        state.hoverInputPortId = portId || null;
+        state.activeConnectTargetId = portId || null;
+        clearConnectHover();
+        if (!state.hoverInputPortId) return;
+        const target = portById(state.hoverInputPortId);
+        if (target) target.classList.add('port-connect-target');
+    }
+
+    function resolveInputPortTarget(clientX, clientY, fromPortId, currentEdgeId = null) {
+        if (!fromPortId) return null;
+        const pointed = asElement(document.elementFromPoint(clientX, clientY))?.closest('.port[data-port-direction="input"]');
+        if (pointed instanceof HTMLElement) {
+            const pointedId = pointed.dataset?.portId;
+            if (pointedId && canConnectPorts(fromPortId, pointedId, currentEdgeId)) {
+                return pointed;
+            }
+        }
+
+        let nearest = null;
+        let minDistance = Number.POSITIVE_INFINITY;
+        const inputPorts = nodesLayer.querySelectorAll('.port[data-port-direction="input"]');
+        inputPorts.forEach((candidate) => {
+            if (!(candidate instanceof HTMLElement)) return;
+            const candidateId = candidate.dataset?.portId;
+            if (!candidateId || !canConnectPorts(fromPortId, candidateId, currentEdgeId)) return;
+            const rect = candidate.getBoundingClientRect();
+            const centerX = rect.left + (rect.width / 2);
+            const centerY = rect.top + (rect.height / 2);
+            const distance = Math.hypot(clientX - centerX, clientY - centerY);
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearest = candidate;
+            }
+        });
+
+        return minDistance <= PORT_CONNECT_SNAP_RADIUS ? nearest : null;
+    }
+
+    function clearInvalidPort() {
+        if (state.invalidTimer) {
+            window.clearTimeout(state.invalidTimer);
+            state.invalidTimer = null;
+        }
+        if (!state.invalidPortId) return;
+        const previous = portById(state.invalidPortId);
+        if (previous) previous.classList.remove('port-invalid');
+        state.invalidPortId = null;
+    }
+
+    function markPortInvalid(portId) {
+        clearInvalidPort();
+        state.invalidPortId = portId;
+        const next = portById(portId);
+        if (next) next.classList.add('port-invalid');
+        state.invalidTimer = window.setTimeout(() => {
+            clearInvalidPort();
+        }, 420);
+    }
     //////////
     const portById = (id) => {
         if (!id) return null;
@@ -924,10 +1165,11 @@
 
         const left = port.offsetLeft + port.offsetWidth / 2;
         const top = port.offsetTop + port.offsetHeight / 2;
+        const yOffset = 8;
 
         return {
             x: node.x + left,
-            y: node.y + top
+            y: node.y + top - yOffset
         };
     }
 
@@ -1143,6 +1385,99 @@
                 stage.style.cursor = 'grabbing';
             }
         }, PORT_HOLD_MS);
+    };
+
+    const beginReconnect = (pointerId, edgeId, clientX, clientY) => {
+        const index = state.doc.edges.findIndex((edge) => edge.id === edgeId);
+        if (index < 0) return;
+        const [edge] = state.doc.edges.splice(index, 1);
+        startConnect(pointerId, edge.from, clientX, clientY, edge);
+    };
+
+    const startConnect = (pointerId, fromPortId, clientX, clientY, reconnectEdge = null) => {
+        const world = worldFromClient(clientX, clientY);
+        state.pointerId = pointerId;
+        state.mode = 'connect';
+        state.connectFromPortId = fromPortId;
+        state.connectEdgeId = reconnectEdge?.id ?? null;
+        state.reconnectEdge = reconnectEdge;
+        state.previewX = world.x;
+        state.previewY = world.y;
+        setCapture(pointerId);
+        renderEdges();
+    };
+
+    const beginConnectFromActivePort = (clientX, clientY) => {
+        const portId = state.activePortId;
+        if (!portId) return false;
+        clearPortHoldTimer();
+        if (state.activePortDirection === 'output') {
+            startConnect(state.pointerId, portId, clientX, clientY);
+            return true;
+        }
+        const existingInputEdge = inputEdge(portId);
+        if (existingInputEdge) {
+            beginReconnect(state.pointerId, existingInputEdge.id, clientX, clientY);
+            return true;
+        }
+        return false;
+    };
+
+    const addEdge = (fromPortId, toPortId = null, loose = null) => {
+        if (!toPortId) return false;
+        if (state.doc.edges.some((edge) => edge.from === fromPortId && edge.to === toPortId)) return false;
+        const sourceMeta = portMeta(fromPortId);
+        const targetMeta = portMeta(toPortId);
+        state.doc.edges.push({
+            id: nextEdgeId(),
+            from: fromPortId,
+            to: toPortId,
+            fromNode: sourceMeta?.node.id ?? null,
+            toNode: targetMeta?.node.id ?? null,
+            looseX: loose ? loose.x : null,
+            looseY: loose ? loose.y : null
+        });
+        return true;
+    };
+
+    const finishConnect = (targetPortId) => {
+        if (!state.connectFromPortId) return;
+        const previewPoint = { x: state.previewX, y: state.previewY };
+        const sourceMeta = portMeta(state.connectFromPortId);
+        const targetMeta = targetPortId ? portMeta(targetPortId) : null;
+
+        if (state.reconnectEdge) {
+            const originalEdge = { ...state.reconnectEdge };
+            const nextEdge = {
+                ...state.reconnectEdge,
+                from: state.connectFromPortId,
+                fromNode: sourceMeta?.node.id ?? null,
+                to: null,
+                toNode: null,
+                looseX: previewPoint.x,
+                looseY: previewPoint.y
+            };
+            if (targetPortId && canConnectPorts(state.connectFromPortId, targetPortId, state.connectEdgeId)) {
+                nextEdge.to = targetPortId;
+                nextEdge.toNode = targetMeta?.node.id ?? null;
+                nextEdge.looseX = null;
+                nextEdge.looseY = null;
+                state.doc.edges.push(nextEdge);
+            } else {
+                if (targetPortId) markPortInvalid(targetPortId);
+                if (originalEdge.to) state.doc.edges.push(originalEdge);
+            }
+            state.reconnectEdge = null;
+            return;
+        }
+
+        if (targetPortId) {
+            if (canConnectPorts(state.connectFromPortId, targetPortId, state.connectEdgeId)) {
+                addEdge(state.connectFromPortId, targetPortId);
+            } else {
+                markPortInvalid(targetPortId);
+            }
+        }
     };
     /////
     const rememberDraggedTemplate = (template) => {
@@ -1557,7 +1892,18 @@
                 notifyTimer: null,
                 activeConnectTargetId: null,
                 connectFromPortId: null,
+                connectEdgeId: null,
+                reconnectEdge: null,
                 hoverInputPortId: null,
+                previewX: 0,
+                previewY: 0,
+                invalidPortId: null,
+                invalidTimer: null,
+                resizeNodeId: null,
+                resizeStartWidth: 0,
+                resizeStartHeight: 0,
+                resizeMinWidth: 0,
+                resizeMinHeight: 0,
                 selectedNodeId: null,
                 draggedActivityTemplate: null,
                 lastDraggedActivityTemplate: null,
@@ -1766,3 +2112,4 @@
     });
 
 })();
+
