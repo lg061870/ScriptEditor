@@ -175,7 +175,7 @@ function CanvasApp() {
         onCancelPending={() => useDiagramStore.getState().setPendingConnection(null)}
         onPick={handlePickForPendingConnection}
       />
-      <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver}>
+      <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver} data-testid="canvas-surface">
         <ReactFlow
           nodes={nodes}
           edges={edges}
