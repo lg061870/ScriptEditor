@@ -161,10 +161,19 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'User Form',
     category: 'Cards',
     color: '#10b981',
-    defaultData: { cardName: 'LeadIntakeCard', modelName: 'LeadIntakeModel' },
+    // Phase 5.3: docs/activity-shapes.md's Card/Model parameters describe
+    // the Card/Model *ports* (aux-config, below) -- "(not connected)" is
+    // their unwired default, not a text value -- so they're not listed as
+    // `fields` here (cardName/modelName previously stood in for them as
+    // plain text, which doesn't match either the doc or the real class:
+    // AdaptiveCardActivity<TCard,TModel> needs an actual cardFactory
+    // lambda + generic type args, no literal JSON form, the same gap
+    // already flagged in JsonToCSharpTranscriber.cs). submissionContextKey/
+    // required ARE the real SubmissionContextKey/IsRequired properties.
+    defaultData: { submissionContextKey: 'adaptive-card-activity-1', required: 'true' },
     fields: [
-      { key: 'cardName', label: 'Card Name', kind: 'text' },
-      { key: 'modelName', label: 'Model Name', kind: 'text' },
+      { key: 'submissionContextKey', label: 'Submission Context Key', kind: 'text' },
+      { key: 'required', label: 'Required', kind: 'boolean' },
     ],
     // The catalog's one shape with aux-config ports (docs/activity-shapes.md):
     // Card/Model are extra config inputs alongside the regular flow Input,
@@ -177,23 +186,31 @@ const DEFINITIONS: ActivityDefinition[] = [
       { idSuffix: 'model', name: 'Model', direction: 'input', role: 'aux-config', type: 'model', position: 'left' },
       CONTROL_OUTPUT,
     ],
-    getSummary: (data) => `Card: ${data.cardName} (${data.modelName})`,
+    getSummary: (data) => `Submission: ${data.submissionContextKey} (Required: ${data.required})`,
   },
   {
     type: 'QuickAnswerActivity',
     title: 'Quick Choices',
     category: 'Interaction',
     color: '#f59e0b',
+    // Phase 5.3: field renamed from `options` to `answers`, matching both
+    // docs/activity-shapes.md and the real constructor
+    // (id, question, answers: IEnumerable<string>, context, logger,
+    // isRequired) exactly -- `required` added for the same reason. Still
+    // generic-fallback transcription only (no JsonToCSharpTranscriber
+    // case references the old or new key), so this rename is safe.
     defaultData: {
       question: 'Would you like an instant quote or to talk to an agent?',
-      options: 'Instant Quote | Talk to Agent | More Info',
+      answers: 'Instant Quote | Talk to Agent | More Info',
+      required: 'true',
     },
     fields: [
       { key: 'question', label: 'Question', kind: 'textarea' },
-      { key: 'options', label: 'Options (pipe-separated)', kind: 'text' },
+      { key: 'answers', label: 'Answers (pipe-separated)', kind: 'text' },
+      { key: 'required', label: 'Required', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Q: ${data.question} [${data.options}]`,
+    getSummary: (data) => `Q: ${data.question} [${data.answers}]`,
   },
   {
     type: 'DelayActivity',
@@ -264,13 +281,25 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'Risk Analysis AI',
     category: 'AI',
     color: '#8b5cf6',
-    defaultData: { prompt: 'Analyze customer lead profile and score risk tier.', model: 'gpt-4o-mini' },
+    // Phase 5.3: real class is PromptActivity : SemanticActivity, ctor
+    // (activityId, Kernel, ILogger) -- Kernel/ILogger have no literal JSON
+    // form (generic-fallback transcription only, unchanged by this
+    // rename). systemPrompt/userPromptTemplate/temperature ARE the real
+    // settable SystemPrompt/UserPromptTemplate/Temperature properties --
+    // replaces the previous prompt/model fields, which matched neither
+    // the doc nor the real class.
+    defaultData: {
+      systemPrompt: 'You are an empathetic insurance assistant.',
+      userPromptTemplate: 'User message: {context.Basics_UserPrompt}.',
+      temperature: '0.7',
+    },
     fields: [
-      { key: 'prompt', label: 'Prompt', kind: 'textarea' },
-      { key: 'model', label: 'Model', kind: 'text' },
+      { key: 'systemPrompt', label: 'System Prompt', kind: 'textarea' },
+      { key: 'userPromptTemplate', label: 'User Prompt Template', kind: 'textarea' },
+      { key: 'temperature', label: 'Temperature', kind: 'number' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Prompt: ${data.prompt}`,
+    getSummary: (data) => `Prompt: ${data.systemPrompt}`,
   },
   {
     type: 'TriggerTopicActivity',
@@ -516,6 +545,170 @@ const DEFINITIONS: ActivityDefinition[] = [
     fields: [{ key: 'escalationMessage', label: 'Escalation Message', kind: 'textarea' }],
     ports: STANDARD_PORTS,
     getSummary: (data) => data.escalationMessage || 'Escalate to human',
+  },
+  // Phase 5.3: Variables & State + I/O categories (docs/activity-shapes.md).
+  {
+    type: 'SetVariableActivity',
+    title: 'Set Variable',
+    category: 'Logic',
+    color: '#0d9488',
+    // Real constructor needs IConversationContext + ILogger (framework
+    // services, no literal JSON form -- generic-fallback transcription
+    // only, same gap as PromptActivity/QuickAnswerActivity).
+    // variableName/value/isGlobal are the real VariableName/Value/
+    // IsGlobal properties; validateNaming maps to the real
+    // ValidateGlobalNaming property (doc's shorter name kept for
+    // doc-parity).
+    defaultData: { variableName: 'Global_Example', value: '', isGlobal: 'true', validateNaming: 'true' },
+    fields: [
+      { key: 'variableName', label: 'Variable Name', kind: 'text' },
+      { key: 'value', label: 'Value', kind: 'text' },
+      { key: 'isGlobal', label: 'Is Global', kind: 'boolean' },
+      { key: 'validateNaming', label: 'Validate Naming', kind: 'boolean' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Set ${data.variableName} = ${data.value}`,
+  },
+  {
+    type: 'GlobalVariableActivity',
+    title: 'Promote to Global',
+    category: 'Logic',
+    color: '#0d9488',
+    // docs/activity-shapes.md's promotionMode/sourceKey/globalKey have no
+    // basis in the real class at all -- verified by reading it. Its only
+    // real configurable behavior is ShouldPromoteToGlobal, a
+    // Func<string, object?, bool> predicate delegate with no literal JSON
+    // form, and its constructor also needs IConversationContext/ILogger.
+    // Kept for doc-parity; none of these fields drive real behavior yet.
+    defaultData: { promotionMode: 'all', sourceKey: '', globalKey: 'Global_<Key>' },
+    fields: [
+      { key: 'promotionMode', label: 'Promotion Mode (not yet transcribable)', kind: 'text' },
+      { key: 'sourceKey', label: 'Source Key', kind: 'text' },
+      { key: 'globalKey', label: 'Global Key', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: () => 'Promote context keys to global scope',
+  },
+  {
+    type: 'DumpCtxActivity',
+    title: 'Dump Context',
+    category: 'Logic',
+    color: '#0d9488',
+    // Real signature: DumpCtxActivity(string id, bool isDevelopment) --
+    // developmentMode maps directly. outputType has no basis in the real
+    // class (no matching property found) -- kept for doc-parity only.
+    defaultData: { developmentMode: 'true', outputType: 'DumpCtx' },
+    fields: [
+      { key: 'developmentMode', label: 'Development Mode', kind: 'boolean' },
+      { key: 'outputType', label: 'Output Type (not yet transcribable)', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Dump context (dev: ${data.developmentMode})`,
+  },
+  {
+    type: 'ResetActivity',
+    title: 'Reset Session',
+    category: 'Logic',
+    color: '#0d9488',
+    // Real signature: ResetActivity(string id, string message) -- resetMessage maps directly.
+    defaultData: { resetMessage: 'Session reset completed' },
+    fields: [{ key: 'resetMessage', label: 'Reset Message', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.resetMessage || 'Reset session',
+  },
+  {
+    type: 'WaitForUserInput',
+    title: 'Wait For User Input',
+    category: 'Interaction',
+    color: '#f59e0b',
+    // Real class WaitForUserInputActivity extends AdaptiveCardActivity<WaitForUserInputModel>
+    // -- needs TopicWorkflowContext/ILogger, the same generic-fallback gap
+    // as AdaptiveCardActivity itself. prompt/modelContextKey both map to
+    // real constructor params; `required` is kept for doc-parity (the
+    // real class always sets IsRequired = true internally, not
+    // configurable via a field).
+    defaultData: { prompt: 'Ask your question about insurance basics:', modelContextKey: 'wait_for_user_input', required: 'true' },
+    fields: [
+      { key: 'prompt', label: 'Prompt', kind: 'textarea' },
+      { key: 'modelContextKey', label: 'Model Context Key', kind: 'text' },
+      { key: 'required', label: 'Required (always true on the real class)', kind: 'boolean' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.prompt || 'Wait for user input',
+  },
+  {
+    type: 'ShowSuggestionsActivity',
+    title: 'Show Suggestions',
+    category: 'Interaction',
+    color: '#f59e0b',
+    // Real signature: ShowSuggestionsActivity(string id, IEnumerable<string>
+    // suggestions, string? eventName = null) -- fully literal, no framework
+    // service dependency. Both fields map directly.
+    defaultData: { suggestions: 'Option 1 | Option 2', eventName: 'UpdateSuggestions' },
+    fields: [
+      { key: 'suggestions', label: 'Suggestions (pipe-separated)', kind: 'text' },
+      { key: 'eventName', label: 'Event Name', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Suggest: [${data.suggestions}]`,
+  },
+  {
+    type: 'InteractiveActivity',
+    title: 'Interactive Prompt',
+    category: 'Interaction',
+    color: '#f59e0b',
+    // Real signature: InteractiveActivity(string id, string message) --
+    // fully literal. inputContextKey/inputRequired map to the real
+    // InputContextKey/IsInputRequired properties. modelContextKey has no
+    // basis in this class (kept for doc-parity only).
+    defaultData: {
+      message: 'Please provide your input',
+      inputContextKey: 'interactive-activity-1',
+      modelContextKey: 'interactive-activity-1_model',
+      inputRequired: 'true',
+    },
+    fields: [
+      { key: 'message', label: 'Message', kind: 'textarea' },
+      { key: 'inputContextKey', label: 'Input Context Key', kind: 'text' },
+      { key: 'modelContextKey', label: 'Model Context Key (not yet transcribable)', kind: 'text' },
+      { key: 'inputRequired', label: 'Input Required', kind: 'boolean' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.message || 'Wait for interactive input',
+  },
+  {
+    type: 'PromptAttentionActivity',
+    title: 'Prompt Attention',
+    category: 'Interaction',
+    color: '#f59e0b',
+    // The real class is named ChatPromptAttentionActivity (not
+    // PromptAttentionActivity) -- a real naming drift between
+    // docs/activity-shapes.md/this catalog and the framework, worth
+    // revisiting in the Phase 5 catalog drift pass (#38). Kept as-is here
+    // since renaming the catalog's own type string is a bigger,
+    // cross-cutting change than this task's scope.
+    defaultData: { message: 'Please answer to continue', durationMs: '3000', eventName: 'PromptAttention' },
+    fields: [
+      { key: 'message', label: 'Message', kind: 'textarea' },
+      { key: 'durationMs', label: 'Duration (ms)', kind: 'number' },
+      { key: 'eventName', label: 'Event Name', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.message || 'Prompt attention',
+  },
+  {
+    type: 'GreetingActivity',
+    title: 'Greeting',
+    category: 'Interaction',
+    color: '#f59e0b',
+    // Real signature: GreetingActivity(string id) -- no message parameter
+    // at all; the greeting text is hardcoded inline in RunActivity().
+    // docs/activity-shapes.md's `greeting` field has no basis in the real
+    // class -- kept for doc-parity only.
+    defaultData: { greeting: 'Welcome! How can I help you?' },
+    fields: [{ key: 'greeting', label: 'Greeting (not yet transcribable)', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.greeting || 'Greeting',
   },
 ];
 
