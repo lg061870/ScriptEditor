@@ -58,8 +58,78 @@ export interface ActivityDefinition {
   color: string;
   defaultData: Record<string, string>;
   fields: ActivityFieldDef[];
-  ports: ActivityPortDef[];
+  /**
+   * Phase 4.4: for the 5 branching types whose output actually depends on
+   * a case/branch list, this is a function of the node's own `data` (so
+   * ports regenerate whenever the Inspector edits that field) instead of
+   * a fixed array. Every other seeded type keeps the plain array form.
+   */
+  ports: ActivityPortDef[] | ((data: Record<string, string>) => ActivityPortDef[]);
   getSummary: (data: Record<string, string>) => string;
+}
+
+/** Splits a delimited case-list field into trimmed, non-empty labels --
+ * e.g. "case-a | case-b" (pipe, SwitchActivity/ConditionalActivity) or
+ * "CoverageEstimate, CompareTermVsWhole, Quote" (comma, Conditional<TriggerTopic>). */
+function parseDelimitedLabels(raw: string | undefined, delimiter: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(delimiter)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Conditional<QuickAnswer>'s `branchMatch` field is comma-separated
+ * "label -> action" pairs (e.g. "StillLearning -> ask"); the port
+ * represents the matched *label* (the case being tested), not the action
+ * it maps to -- the same role SwitchActivity's case keys play. */
+function parseBranchMatchLabels(raw: string | undefined): string[] {
+  return parseDelimitedLabels(raw, ',').map((segment) => segment.split('->')[0]?.trim() ?? segment);
+}
+
+function slugify(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** Turns case labels into output port templates -- id derived from the
+ * label's own slug (not its position), so a case's port id (and therefore
+ * any edge wired to it) stays stable across reordering or edits to other
+ * cases in the same list; only adding/removing that specific case changes
+ * its id. Collisions (two cases slugifying the same, or an empty slug)
+ * fall back to a position-based suffix. */
+function casePortDefs(labels: string[]): ActivityPortDef[] {
+  const used = new Set<string>();
+  return labels.map((label, index) => {
+    let idSuffix = `case-${slugify(label) || index}`;
+    while (used.has(idSuffix)) idSuffix = `${idSuffix}-${index}`;
+    used.add(idSuffix);
+    return { idSuffix, name: label, direction: 'output', role: 'main', type: 'flow', position: 'right' };
+  });
+}
+
+const DEFAULT_PORT: ActivityPortDef = { idSuffix: 'case-default', name: 'Default', direction: 'output', role: 'main', type: 'flow', position: 'right' };
+
+/**
+ * Phase 4.4: builds a branching activity's full port list -- Input, one
+ * output port per case (the "one real output port per case/branch"
+ * acceptance criteria this task exists for, replacing a single generic
+ * Output), an optional Default port when the type's default-branch field
+ * is set, then Exception/Control. Cases/labels are read fresh from `data`
+ * every time this runs, so editing the case-list field in the Inspector
+ * regenerates the port list (store/diagramStore.ts's updateNodeData).
+ */
+function branchingPorts(
+  caseLabels: (data: Record<string, string>) => string[],
+  defaultBranchKey?: string,
+): (data: Record<string, string>) => ActivityPortDef[] {
+  return (data) => {
+    const cases = casePortDefs(caseLabels(data));
+    const hasDefault = defaultBranchKey ? Boolean(data[defaultBranchKey]?.trim()) : false;
+    return [MAIN_INPUT, ...cases, ...(hasDefault ? [DEFAULT_PORT] : []), EXCEPTION_OUTPUT, CONTROL_OUTPUT];
+  };
 }
 
 const DEFINITIONS: ActivityDefinition[] = [
@@ -151,6 +221,125 @@ const DEFINITIONS: ActivityDefinition[] = [
     ports: STANDARD_PORTS,
     getSummary: (data) => `Subtopic: ${data.subTopicName} (Wait: ${data.waitForCompletion})`,
   },
+  // Phase 4.4: the 6 branching/"Selection" types (docs/activity-shapes.md).
+  // docs/activity-shapes.md's own category note flags these as a *known
+  // limitation of the current (old) editor* -- generic Output only, no
+  // per-case ports -- "expected to be addressed by the upcoming
+  // ScriptEditor rewrite". This is that fix, for 5 of the 6: real per-case
+  // output ports driven by each type's actual case-list field.
+  //
+  // DecisionActivity is deliberately excluded from dynamic ports (kept on
+  // STANDARD_PORTS below) even though this task's issue names it: its
+  // real ConversaCore class (DecisionActivity<TInput,TEvidence,TResponse>)
+  // has no case/branch/outcome list anywhere in its constructor or
+  // fields, and neither does docs/activity-shapes.md's own parameter
+  // table for it -- confirmed by reading the actual class. Inventing a
+  // fake case-list field with no basis in the framework or the docs would
+  // be fabricating a capability, not implementing one.
+  //
+  // Real, load-bearing limitation carried over from these types' actual
+  // ConversaCore classes (not introduced here, not glossed over): only
+  // ConditionalActivity's real branching (Dictionary<string,string> of
+  // condition value -> target activity id, set via AddBranch) is
+  // structurally compatible with routing different downstream nodes per
+  // port. SwitchActivity's real cases are nested TopicFlowActivity
+  // objects passed directly into its constructor, not separate Add()
+  // statements a port-based edge could target, and ChoiceActivity's real
+  // RunActivity() calls a single TransitionTo(...) regardless of which
+  // option was chosen -- it doesn't branch execution per option at all.
+  // So these ports make branching *expressible on the canvas* for all 5
+  // (this task's actual scope, a Phase 4/Ports-&-Routing concern); making
+  // JsonToCSharpTranscriber emit real per-case C# for each of them is a
+  // separate, larger Phase 3-adjacent gap, consistent with Phase 3.1's
+  // already-documented best-effort/"may not compile" fallback for any
+  // type without a specific generator.
+  {
+    type: 'ConditionalActivity',
+    title: 'Conditional Branch',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { selectorKey: 'ConditionKey', cases: 'case-a | case-b', defaultBranch: '' },
+    fields: [
+      { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
+      { key: 'cases', label: 'Cases (pipe-separated)', kind: 'text' },
+      { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
+    ],
+    ports: branchingPorts((data) => parseDelimitedLabels(data.cases, '|'), 'defaultBranch'),
+    getSummary: (data) => `If ${data.selectorKey} in [${data.cases}]`,
+  },
+  {
+    type: 'Conditional<QuickAnswer>',
+    title: 'Branch on Quick Answer',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { selectorKey: 'Basics_LastDecisionLabel', branchMatch: 'StillLearning -> ask', defaultBranch: '' },
+    fields: [
+      { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
+      { key: 'branchMatch', label: 'Branch Match (label -> action, comma-separated)', kind: 'text' },
+      { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
+    ],
+    ports: branchingPorts((data) => parseBranchMatchLabels(data.branchMatch), 'defaultBranch'),
+    getSummary: (data) => `Branch on ${data.selectorKey}: ${data.branchMatch}`,
+  },
+  {
+    type: 'Conditional<TriggerTopic>',
+    title: 'Branch to Topic',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { selectorKey: 'Basics_NextMode', branches: 'CoverageEstimate, CompareTermVsWhole, Quote', defaultBranch: '' },
+    fields: [
+      { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
+      { key: 'branches', label: 'Branches (comma-separated)', kind: 'text' },
+      { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
+    ],
+    ports: branchingPorts((data) => parseDelimitedLabels(data.branches, ','), 'defaultBranch'),
+    getSummary: (data) => `Route ${data.selectorKey} to [${data.branches}]`,
+  },
+  {
+    type: 'DecisionActivity',
+    title: 'AI Decision',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { evidenceContextKey: 'DecisionEvidence', modelId: 'gpt-4o', temperature: '0.3', requireJson: 'true' },
+    fields: [
+      { key: 'evidenceContextKey', label: 'Evidence Context Key', kind: 'text' },
+      { key: 'modelId', label: 'Model Id', kind: 'text' },
+      { key: 'temperature', label: 'Temperature', kind: 'number' },
+      { key: 'requireJson', label: 'Require JSON', kind: 'boolean' },
+    ],
+    // Not dynamic -- see the file-level comment above for why.
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Decide from ${data.evidenceContextKey} (${data.modelId})`,
+  },
+  {
+    type: 'SwitchActivity',
+    title: 'Switch',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { valueContextKey: 'SwitchKey', caseKeys: 'case-a | case-b', loopAfterCase: 'false', defaultCase: '' },
+    fields: [
+      { key: 'valueContextKey', label: 'Value Context Key', kind: 'text' },
+      { key: 'caseKeys', label: 'Case Keys (pipe-separated)', kind: 'text' },
+      { key: 'loopAfterCase', label: 'Loop After Case', kind: 'boolean' },
+      { key: 'defaultCase', label: 'Default Case', kind: 'text' },
+    ],
+    ports: branchingPorts((data) => parseDelimitedLabels(data.caseKeys, '|'), 'defaultCase'),
+    getSummary: (data) => `Switch on ${data.valueContextKey}: [${data.caseKeys}]`,
+  },
+  {
+    type: 'ChoiceActivity',
+    title: 'Quick Reply Choice',
+    category: 'Logic',
+    color: '#ec4899',
+    defaultData: { question: 'How would you like to continue?', options: 'Option A | Option B', submissionKey: 'choice-activity-1' },
+    fields: [
+      { key: 'question', label: 'Question', kind: 'textarea' },
+      { key: 'options', label: 'Options (pipe-separated)', kind: 'text' },
+      { key: 'submissionKey', label: 'Submission Key', kind: 'text' },
+    ],
+    ports: branchingPorts((data) => parseDelimitedLabels(data.options, '|')),
+    getSummary: (data) => `Q: ${data.question} [${data.options}]`,
+  },
 ];
 
 const BY_TYPE: Record<string, ActivityDefinition> = Object.fromEntries(
@@ -167,4 +356,16 @@ export function getNodeSummary(type: string, data: Record<string, string>): stri
 
 export function listSeededActivityDefinitions(): ActivityDefinition[] {
   return DEFINITIONS;
+}
+
+/** Resolves a type's port templates against a specific node's current
+ * `data` -- the one place that knows how to handle both the plain-array
+ * and data-driven-function forms of ActivityDefinition.ports. Falls back
+ * to a generic main-role Input/Output pair for an unseeded type. */
+export function resolveActivityPortDefs(type: string, data: Record<string, string>): ActivityPortDef[] {
+  const definition = getActivityDefinition(type);
+  const ports = definition?.ports;
+  if (typeof ports === 'function') return ports(data);
+  if (ports) return ports;
+  return [MAIN_INPUT, MAIN_OUTPUT];
 }

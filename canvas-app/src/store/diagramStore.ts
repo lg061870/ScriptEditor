@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { DiagramDocument, DiagramEndpoint } from '../schema/diagram';
 import { sampleDocument } from '../fixtures/sampleDocument';
-import { createDiagramNode, nextEdgeId } from '../actions/createNode';
+import { createDiagramNode, nextEdgeId, buildPortsFromDefs } from '../actions/createNode';
+import { resolveActivityPortDefs } from '../registry/activityDefinitions';
 
 /**
  * Central JSON store (Phase 2.1). Every canvas mutation -- add, move,
@@ -99,10 +100,34 @@ export const useDiagramStore = create<DiagramStoreState>((set) => ({
   },
 
   updateNodeData: (nodeId, key, value, origin) => {
-    applyMutation(set, origin, (document) => ({
-      ...document,
-      nodes: document.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, [key]: value } } : n)),
-    }));
+    applyMutation(set, origin, (document) => {
+      // Phase 4.4: a branching type's ports are a function of its own
+      // data (registry/activityDefinitions.ts), so an edit to its
+      // case-list field must regenerate them here -- this is the only
+      // place besides creation (actions/createNode.ts) a node's data
+      // changes. Port ids are derived from each case's own label, so an
+      // unrelated edit (or reordering cases) leaves surviving cases'
+      // port ids -- and any edges wired to them -- untouched; only a
+      // genuinely added/removed case changes its own port's id. This is
+      // a no-op for every non-branching type: their ports don't depend
+      // on data, so the regenerated list is identical to the one it
+      // replaces.
+      const nodes = document.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const data = { ...n.data, [key]: value };
+        return { ...n, data, ports: buildPortsFromDefs(n.id, resolveActivityPortDefs(n.type, data)) };
+      });
+
+      // A case-list edit that removes a case removes that case's port
+      // too -- prune any edge that pointed at a now-nonexistent port,
+      // the same edge-integrity guarantee removeNodes already provides.
+      const validPortIds = new Set(nodes.flatMap((n) => n.ports.map((p) => p.id)));
+      const edges = document.edges.filter(
+        (e) => validPortIds.has(e.from.port) && (e.to === undefined || validPortIds.has(e.to.port)),
+      );
+
+      return { ...document, nodes, edges };
+    });
   },
 
   connectEdge: (from, to, origin) => {
