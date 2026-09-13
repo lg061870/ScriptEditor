@@ -1,40 +1,67 @@
-# Transcription API (Phase 0.5 stub)
+# Transcription API
 
 Two endpoints, hosted from the existing `ScriptEditor.csproj` (extended, not a
 new project — `Endpoints/TranscriptionEndpoints.cs`, wired in `Program.cs`).
-Both currently return a **hardcoded fixture**, ignoring the request body's
-actual content — this phase only proves the route/DTO shape exists. Real
-Roslyn-backed logic lands in Phase 3.1 (`json-to-csharp`) and Phase 3.2
-(`csharp-to-json`).
+
+`json-to-csharp` is real as of Phase 3.1 — `Transcription/JsonToCSharpTranscriber.cs`,
+built with Roslyn `SyntaxFactory`. `csharp-to-json` is still the Phase 0.5
+stub (hardcoded fixture, ignores the request body); real parsing is Phase 3.2.
 
 Request/response DTOs are `Models/Schema/DiagramSchemaV2.cs`
 (`docs/schema/diagram-schema-v2.md`).
 
 ## `POST /api/transcribe/json-to-csharp`
 
-Request body: a `DiagramDocumentV2` (the actual content is ignored by the
-stub — any valid JSON matching the shape is accepted).
+Request body: a `DiagramDocumentV2`. Real transcription
+(`Transcription/JsonToCSharpTranscriber.cs`) — output depends on the actual
+nodes/data sent.
 
 ```bash
 curl -s -X POST http://localhost:5000/api/transcribe/json-to-csharp \
   -H "Content-Type: application/json" \
   -d '{
-    "viewport": { "panX": 24, "panY": 18, "zoom": 1 },
+    "viewport": { "panX": 0, "panY": 0, "zoom": 1 },
     "nodes": [
-      { "id": "n1", "type": "SimpleActivity", "x": 0, "y": 0,
+      { "id": "n1", "type": "SimpleActivity", "name": "Welcome", "x": 0, "y": 0,
+        "data": { "message": "Hi there!" }, "ports": [], "context": { "reads": [], "writes": [] } },
+      { "id": "n2", "type": "DelayActivity", "name": "Pause1", "x": 260, "y": 0,
+        "data": { "durationSec": "2", "showTyping": "true" }, "ports": [], "context": { "reads": [], "writes": [] } },
+      { "id": "n3", "type": "EndActivity", "x": 520, "y": 0,
         "data": {}, "ports": [], "context": { "reads": [], "writes": [] } }
     ],
-    "edges": [],
-    "cards": [],
-    "models": []
+    "edges": [], "cards": [], "models": []
   }'
 ```
 
-Response `200 OK` (actual, verified via a live curl round-trip against `dotnet run`):
+Response `200 OK` (actual, verified via a live curl round-trip against `dotnet run`,
+and the generated class shape/statements were separately compiled and
+confirmed to build with 0 errors against the real local Activity classes —
+see the "Compilability" section below):
 
 ```json
-{"cSharp":"public partial class MainConversation : TopicFlow\n{\n    protected override void BuildWorkflow()\n    {\n        Add(new SimpleActivity(\"greet\"));\n        Add(new EndActivity());\n    }\n}"}
+{"cSharp":"public partial class MainConversation : TopicFlow\n{\n    public MainConversation(TopicWorkflowContext context, ILogger logger) : base(context, logger, \"MainConversation\")\n    {\n        BuildWorkflow();\n    }\n\n    private void BuildWorkflow()\n    {\n        Add(new SimpleActivity(\"Welcome\", \"Hi there!\"));\n        Add(new DelayActivity(\"Pause1\", TimeSpan.FromSeconds(2)) { ShowTypingIndicator = true });\n        Add(new EndActivity(\"n5\"));\n    }\n}\n"}
 ```
+
+### Compilability
+
+Only four activity types get real, verified-compilable generation:
+`SimpleActivity`, `EndActivity`, `DelayActivity`, `TriggerTopicActivity` —
+these were checked against their actual constructors/properties in
+`Activities/*.cs`, and the exact generated shape was separately compiled
+(as a real subclass, not just inspected) with 0 errors.
+
+Every other activity type (including two of the six prototype-seeded types,
+`PromptActivity` and `QuickAnswerActivity`, plus `AdaptiveCardActivity`) uses
+a best-effort generic fallback that is **not guaranteed to compile** — those
+three specifically need constructor-injected framework dependencies
+(a live `Kernel`, a `TopicWorkflowContext`, a typed `ILogger<T>`, and for
+`AdaptiveCardActivity` also compile-time generic type arguments and a
+card-factory lambda) that have no literal representation anywhere in
+`DiagramNodeV2`. The generated code marks every such statement with a
+`// best-effort: ... this may not compile` comment rather than presenting it
+as equivalent to the four verified types. Fixing this for real needs a
+per-activity constructor/property catalog (`CONCEPT_OF_OPERATIONS.md` §4.3's
+"Dynamic ConversaCore Reflection Catalog") — out of scope for this task.
 
 ## `POST /api/transcribe/csharp-to-json`
 

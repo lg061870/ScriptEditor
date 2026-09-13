@@ -1,15 +1,10 @@
 using ScriptEditor.Models.Schema;
+using ScriptEditor.Transcription;
 
 namespace ScriptEditor.Endpoints;
 
-// Phase 0.5 stub: both endpoints return a hardcoded fixture, ignoring the
-// request body's actual content, matching this phase's acceptance criteria
-// ("both returning a hardcoded fixture response"). Real Roslyn-backed
-// transcription is Phase 3.1 (json-to-csharp) and Phase 3.2 (csharp-to-json).
-//
-// NOT COMPILED: no .NET SDK was available in the sandbox this was written in
-// (network policy blocked the SDK download). Run `dotnet build` before
-// relying on this file -- see docs/schema/diagram-schema-v2.md.
+// json-to-csharp is now real (Phase 3.1, JsonToCSharpTranscriber).
+// csharp-to-json is still the Phase 0.5 stub -- real parsing is Phase 3.2.
 
 public sealed record JsonToCSharpResponse(string CSharp);
 
@@ -23,20 +18,8 @@ public static class TranscriptionEndpoints
 
         group.MapPost("/json-to-csharp", (DiagramDocumentV2 document) =>
         {
-            // Stub: the real Phase 3.1 transcriber will walk `document.Nodes`
-            // in edge order and emit one Add(new XActivity(...)) per node.
-            const string fixture = """
-                public partial class MainConversation : TopicFlow
-                {
-                    protected override void BuildWorkflow()
-                    {
-                        Add(new SimpleActivity("greet"));
-                        Add(new EndActivity());
-                    }
-                }
-                """;
-
-            return Results.Ok(new JsonToCSharpResponse(fixture));
+            var csharp = JsonToCSharpTranscriber.Transcribe(document);
+            return Results.Ok(new JsonToCSharpResponse(csharp));
         })
         .WithName("TranscribeJsonToCSharp");
 
