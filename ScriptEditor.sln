@@ -1,9 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.2.11430.68 d18.0
+VisualStudioVersion = 18.2.11430.68
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScriptEditor", "ScriptEditor.csproj", "{3C6E6E83-396E-1F51-F79E-DC5B3939C2B4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConversaCore", "..\InsuranceSemanticV2\ConversaCore\ConversaCore.csproj", "{38E2DCF1-2156-BE91-42DC-52ADDDDDAC7B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConversaCore.UI", "..\InsuranceSemanticV2\ConversaCore.UI\ConversaCore.UI.csproj", "{DA668C75-8160-C936-430D-75E280661628}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +19,14 @@ Global
 		{3C6E6E83-396E-1F51-F79E-DC5B3939C2B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3C6E6E83-396E-1F51-F79E-DC5B3939C2B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3C6E6E83-396E-1F51-F79E-DC5B3939C2B4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38E2DCF1-2156-BE91-42DC-52ADDDDDAC7B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38E2DCF1-2156-BE91-42DC-52ADDDDDAC7B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38E2DCF1-2156-BE91-42DC-52ADDDDDAC7B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38E2DCF1-2156-BE91-42DC-52ADDDDDAC7B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DA668C75-8160-C936-430D-75E280661628}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DA668C75-8160-C936-430D-75E280661628}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DA668C75-8160-C936-430D-75E280661628}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DA668C75-8160-C936-430D-75E280661628}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
