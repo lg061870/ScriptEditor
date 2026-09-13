@@ -1,4 +1,5 @@
 using ScriptEditor.Components;
+using ScriptEditor.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,5 +25,7 @@ app.UseAntiforgery();
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+app.MapTranscriptionEndpoints();
 
 app.Run();
