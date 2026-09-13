@@ -27,18 +27,38 @@ namespace ScriptEditor.Transcription;
 /// whose edges were already a plain sequential chain to begin with; real
 /// branching topology cannot survive a C#-text round-trip until ports
 /// are represented in the generated code (a Phase 4+ concern).
+///
+/// Phase 3.5: CSharpSyntaxTree.ParseText never throws on its own -- it is
+/// error-tolerant by design and always returns a (possibly malformed)
+/// tree, even for garbage input. Without an explicit check, a real syntax
+/// error (a stray brace, a missing semicolon) would silently fall through
+/// to whatever partial/wrong AST shape the error-recovery parser produced
+/// instead of failing loudly -- exactly the "corrupt the last-valid JSON
+/// document" failure mode CONCEPT_OF_OPERATIONS.md line 333 warns against.
+/// So the first thing this does is ask the tree itself for its
+/// diagnostics and fail before attempting any semantic extraction.
 /// </summary>
 public static class CSharpToJsonParser
 {
     public static DiagramDocumentV2 Parse(string code)
     {
         var tree = CSharpSyntaxTree.ParseText(code);
+
+        var syntaxErrors = tree.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(ToParseDiagnostic)
+            .ToList();
+        if (syntaxErrors.Count > 0)
+        {
+            throw new CSharpParseException(syntaxErrors);
+        }
+
         var root = tree.GetRoot();
 
         var classDeclaration = root.DescendantNodes().OfType<ClassDeclarationSyntax>().FirstOrDefault();
         if (classDeclaration is null)
         {
-            throw new FormatException("No class declaration found.");
+            throw new CSharpParseException([new ParseDiagnostic("Error", "No class declaration found.", null)]);
         }
 
         var buildWorkflow = classDeclaration.Members
@@ -46,7 +66,7 @@ public static class CSharpToJsonParser
             .FirstOrDefault(m => m.Identifier.Text == "BuildWorkflow");
         if (buildWorkflow?.Body is null)
         {
-            throw new FormatException("No BuildWorkflow() method body found.");
+            throw new CSharpParseException([new ParseDiagnostic("Error", "No BuildWorkflow() method body found.", null)]);
         }
 
         var addCalls = buildWorkflow.Body.Statements
@@ -204,4 +224,28 @@ public static class CSharpToJsonParser
 
     private static string Uncapitalize(string key) =>
         key.Length == 0 ? key : char.ToLowerInvariant(key[0]) + key[1..];
+
+    private static ParseDiagnostic ToParseDiagnostic(Diagnostic d)
+    {
+        var span = d.Location.GetLineSpan();
+        int? line = span.IsValid ? span.StartLinePosition.Line + 1 : null;
+        return new ParseDiagnostic(d.Severity.ToString(), d.GetMessage(), line);
+    }
+}
+
+/// <summary>One diagnostic to surface in the code editor gutter (Phase 3.5
+/// / CONCEPT_OF_OPERATIONS.md line 333). Line is 1-based to match editor
+/// conventions (Roslyn's own LinePosition is 0-based); null when a
+/// diagnostic isn't tied to a specific source location (e.g. "no
+/// BuildWorkflow() method found").</summary>
+public sealed record ParseDiagnostic(string Severity, string Message, int? Line);
+
+/// <summary>Thrown instead of returning a malformed/partial document --
+/// carries every diagnostic Parse found, not just the first, so the editor
+/// can surface all of them at once rather than round-tripping one syntax
+/// error at a time.</summary>
+public sealed class CSharpParseException(List<ParseDiagnostic> diagnostics)
+    : Exception(diagnostics.FirstOrDefault()?.Message ?? "C# parse error")
+{
+    public List<ParseDiagnostic> Diagnostics { get; } = diagnostics;
 }

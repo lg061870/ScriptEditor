@@ -10,7 +10,7 @@ public sealed record JsonToCSharpResponse(string CSharp);
 
 public sealed record CSharpToJsonRequest(string Code);
 
-public sealed record CSharpToJsonErrorResponse(string Error);
+public sealed record CSharpToJsonErrorResponse(List<ParseDiagnostic> Diagnostics);
 
 public static class TranscriptionEndpoints
 {
@@ -32,13 +32,14 @@ public static class TranscriptionEndpoints
                 var document = CSharpToJsonParser.Parse(request.Code);
                 return Results.Ok(document);
             }
-            catch (FormatException ex)
+            catch (CSharpParseException ex)
             {
-                // Real Phase 3.5 (syntax-error surfacing without corrupting
-                // the last-valid document) belongs on the frontend, which
-                // must keep its own last-good state and only apply a
-                // successful parse -- this 400 is what makes that possible.
-                return Results.BadRequest(new CSharpToJsonErrorResponse(ex.Message));
+                // Phase 3.5: structured diagnostics (severity/message/line),
+                // not just a string -- the frontend surfaces these in the
+                // code editor gutter and, critically, never applies them to
+                // the JSON store, so the last-valid document survives a
+                // syntax error untouched (CONCEPT_OF_OPERATIONS.md line 333).
+                return Results.BadRequest(new CSharpToJsonErrorResponse(ex.Diagnostics));
             }
         })
         .WithName("TranscribeCSharpToJson");
