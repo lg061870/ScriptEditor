@@ -23,7 +23,7 @@ public class RoundTripTests
             Nodes =
             [
                 MakeNode("n1", "Welcome", "SimpleActivity", new() { ["message"] = "Hi there!" }),
-                MakeNode("n2", "Pause1", "DelayActivity", new() { ["durationSec"] = "2", ["showTyping"] = "true" }),
+                MakeNode("n2", "Pause1", "DelayActivity", new() { ["durationMs"] = "2000", ["showTyping"] = "true" }),
                 MakeNode("n3", "GoToQuote", "TriggerTopicActivity", new() { ["subTopicName"] = "QuoteGenerationTopic", ["waitForCompletion"] = "true" }),
                 MakeNode("n4", "Bye", "EndActivity", new()),
             ],

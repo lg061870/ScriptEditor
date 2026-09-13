@@ -138,8 +138,21 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'Bot Message',
     category: 'Messaging',
     color: '#3b82f6',
-    defaultData: { message: 'Thank you for your response! How can I assist you further?' },
-    fields: [{ key: 'message', label: 'Message', kind: 'textarea' }],
+    // docs/activity-shapes.md lists a "Mode" parameter ("message or
+    // action") alongside Message. The real class (Activities/
+    // SimpleActivity.cs) has two constructors -- one taking a literal
+    // message, one taking a Func<TopicWorkflowContext, object?,
+    // Task<object?>> delegate for "action" mode -- and a delegate has no
+    // literal JSON representation (the same category of gap
+    // JsonToCSharpTranscriber.cs's own doc comment already flags for
+    // PromptActivity/QuickAnswerActivity). `mode` is kept here for
+    // doc-parity and shown as read-only intent; only "message" is
+    // actually transcribable today.
+    defaultData: { mode: 'message', message: 'Thank you for your response! How can I assist you further?' },
+    fields: [
+      { key: 'mode', label: 'Mode (only "message" is transcribable today)', kind: 'text' },
+      { key: 'message', label: 'Message', kind: 'textarea' },
+    ],
     ports: STANDARD_PORTS,
     getSummary: (data) => data.message || 'Send static bot message',
   },
@@ -187,13 +200,64 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'Pacing Pause',
     category: 'Flow',
     color: '#3b82f6',
-    defaultData: { durationSec: '2', showTyping: 'true' },
+    // "Duration (ms)"/durationMs matches docs/activity-shapes.md's "Delay"
+    // entry exactly (Phase 5.1) -- also renamed in Transcription/
+    // JsonToCSharpTranscriber.cs and CSharpToJsonParser.cs (TimeSpan.
+    // FromMilliseconds, not FromSeconds) so the field and the generated
+    // C# stay consistent; showTyping isn't in the doc's minimal table but
+    // is kept -- it's ShowTypingIndicator, a real settable property on
+    // the real class, not a fabricated field.
+    defaultData: { durationMs: '1000', showTyping: 'true' },
     fields: [
-      { key: 'durationSec', label: 'Duration (sec)', kind: 'number' },
+      { key: 'durationMs', label: 'Duration (ms)', kind: 'number' },
       { key: 'showTyping', label: 'Show Typing', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Pause: ${data.durationSec}s (Typing: ${data.showTyping})`,
+    getSummary: (data) => `Pause: ${data.durationMs}ms (Typing: ${data.showTyping})`,
+  },
+  {
+    type: 'CompositeActivity',
+    title: 'Composite Sequence',
+    category: 'Flow',
+    color: '#3b82f6',
+    // docs/activity-shapes.md lists a "Child Count" parameter (childCount,
+    // default 8), but the real class (CompositeActivity(string id,
+    // IEnumerable<TopicFlowActivity> activities)) takes actual nested
+    // child activities, not a count -- there's no factory or property
+    // that turns a number into children. That's a structural gap in the
+    // same category as SwitchActivity's nested-case constructor (#29's
+    // comment) and isn't attempted here; childCount is kept for
+    // doc-parity but doesn't drive anything transcribable yet.
+    // isolateContext/completeMessage ARE real settable properties
+    // (IsolateContext, CompleteMessage).
+    defaultData: { childCount: '8', isolateContext: 'false', completeMessage: 'Composite completed' },
+    fields: [
+      { key: 'childCount', label: 'Child Count (not yet transcribable)', kind: 'number' },
+      { key: 'isolateContext', label: 'Isolate Context', kind: 'boolean' },
+      { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `${data.childCount} children (isolated: ${data.isolateContext})`,
+  },
+  {
+    type: 'EndActivity',
+    title: 'End Conversation',
+    category: 'Flow',
+    color: '#6b7280',
+    // docs/activity-shapes.md also lists resultKey/completedFlagKey, but
+    // the real class's RunActivity() hardcodes those context keys as the
+    // literal strings "Result" and "IsCompleted" -- there's no
+    // constructor param or property that makes them configurable, so
+    // they're not included here (would be fields with no effect).
+    // endMessage is the real, settable EndMessage (via the constructor's
+    // `message` param).
+    defaultData: { endMessage: 'Done' },
+    fields: [{ key: 'endMessage', label: 'End Message', kind: 'textarea' }],
+    // The one seeded type without a Control port -- docs/activity-shapes.md
+    // agrees: EndActivity terminates the flow, so there's nothing left to
+    // route a "control" continuation to.
+    ports: [MAIN_INPUT, MAIN_OUTPUT, EXCEPTION_OUTPUT],
+    getSummary: (data) => data.endMessage || 'End conversation',
   },
   {
     type: 'PromptActivity',

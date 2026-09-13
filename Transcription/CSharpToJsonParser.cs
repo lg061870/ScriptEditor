@@ -125,15 +125,15 @@ public static class CSharpToJsonParser
                 id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
                 if (positionalArgs.Count > 1)
                 {
-                    data["message"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                    data["endMessage"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
                 }
                 break;
 
             case "DelayActivity":
                 id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
-                if (positionalArgs.Count > 1 && TryParseTimeSpanFromSecondsCall(positionalArgs[1].Expression, out var seconds))
+                if (positionalArgs.Count > 1 && TryParseTimeSpanFromMillisecondsCall(positionalArgs[1].Expression, out var milliseconds))
                 {
-                    data["durationSec"] = seconds;
+                    data["durationMs"] = milliseconds;
                 }
                 foreach (var (key, value) in InitializerAssignments(creation))
                 {
@@ -194,18 +194,18 @@ public static class CSharpToJsonParser
         }
     }
 
-    private static bool TryParseTimeSpanFromSecondsCall(ExpressionSyntax expression, out string seconds)
+    private static bool TryParseTimeSpanFromMillisecondsCall(ExpressionSyntax expression, out string milliseconds)
     {
         if (expression is InvocationExpressionSyntax
             {
-                Expression: MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.Text: "TimeSpan" }, Name.Identifier.Text: "FromSeconds" },
+                Expression: MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.Text: "TimeSpan" }, Name.Identifier.Text: "FromMilliseconds" },
                 ArgumentList.Arguments: [var arg, ..],
             } && arg.Expression is LiteralExpressionSyntax literal)
         {
-            seconds = literal.Token.ValueText;
+            milliseconds = literal.Token.ValueText;
             return true;
         }
-        seconds = "";
+        milliseconds = "";
         return false;
     }
 

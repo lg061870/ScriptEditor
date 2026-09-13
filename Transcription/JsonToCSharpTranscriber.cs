@@ -136,11 +136,13 @@ public static class JsonToCSharpTranscriber
             })));
     }
 
-    /// <summary>Real signature: EndActivity(string id, string? message = null).</summary>
+    /// <summary>Real signature: EndActivity(string id, string? message = null).
+    /// Data key is "endMessage" (not "message") to match
+    /// docs/activity-shapes.md's "End Message" parameter exactly (Phase 5.1).</summary>
     private static ExpressionSyntax BuildEndActivity(string id, Dictionary<string, string> data)
     {
         var args = new List<ArgumentSyntax> { Argument(StringLiteral(id)) };
-        if (data.TryGetValue("message", out var message) && !string.IsNullOrEmpty(message))
+        if (data.TryGetValue("endMessage", out var message) && !string.IsNullOrEmpty(message))
         {
             args.Add(Argument(StringLiteral(message)));
         }
@@ -152,16 +154,20 @@ public static class JsonToCSharpTranscriber
     /// Real signature: DelayActivity(string id, TimeSpan delay), with a
     /// real settable ShowTypingIndicator property (not "ShowTyping" --
     /// the schema field's key doesn't match the real property name, this
-    /// generator corrects for that explicitly).
+    /// generator corrects for that explicitly). Uses TimeSpan.FromMilliseconds
+    /// and the "durationMs" data key -- matching docs/activity-shapes.md's
+    /// "Duration (ms)" parameter exactly (Phase 5.1); milliseconds also
+    /// matches DelayActivity's own Create(string id, int milliseconds)
+    /// convenience factory in the real class, not just the doc.
     /// </summary>
     private static ExpressionSyntax BuildDelayActivity(string id, Dictionary<string, string> data)
     {
-        var seconds = data.TryGetValue("durationSec", out var raw) && double.TryParse(raw, out var parsed) ? parsed : 1.0;
+        var milliseconds = data.TryGetValue("durationMs", out var raw) && double.TryParse(raw, out var parsed) ? parsed : 1000.0;
 
         var timeSpanCall = InvocationExpression(
-                MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, IdentifierName("TimeSpan"), IdentifierName("FromSeconds")))
+                MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, IdentifierName("TimeSpan"), IdentifierName("FromMilliseconds")))
             .WithArgumentList(ArgumentList(SingletonSeparatedList(
-                Argument(LiteralExpression(SyntaxKind.NumericLiteralExpression, Literal(seconds))))));
+                Argument(LiteralExpression(SyntaxKind.NumericLiteralExpression, Literal(milliseconds))))));
 
         ExpressionSyntax creation = ObjectCreationExpression(IdentifierName("DelayActivity"))
             .WithArgumentList(ArgumentList(SeparatedList(new[] { Argument(StringLiteral(id)), Argument(timeSpanCall) })));

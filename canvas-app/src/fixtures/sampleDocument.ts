@@ -32,9 +32,13 @@ export const sampleDocument: DiagramDocument = {
       type: 'EndActivity',
       x: 260,
       y: 0,
-      data: {},
+      // Matches EndActivity's real port/data shape (registry/activityDefinitions.ts,
+      // sourced from docs/activity-shapes.md) -- Phase 5.1.
+      data: { endMessage: 'Done' },
       ports: [
         { id: 'n2-in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
+        { id: 'n2-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+        { id: 'n2-exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'right' },
       ],
       context: { reads: [], writes: [] },
     },
