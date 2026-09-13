@@ -44,5 +44,6 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.MapTranscriptionEndpoints();
+app.MapWorkflowEndpoints();
 
 app.Run();
