@@ -190,11 +190,14 @@ public static class JsonToCSharpTranscriber
     /// topicToTrigger, ILogger? logger = null, bool waitForCompletion =
     /// false, IConversationContext? conversationContext = null). Skips
     /// the optional `logger`/`conversationContext` params (no literal
-    /// representation) via a named argument for waitForCompletion.
+    /// representation) via a named argument for waitForCompletion. Data
+    /// key is "topicToTrigger" (not "subTopicName") to match both the
+    /// real constructor parameter name and docs/activity-shapes.md's
+    /// "Topic To Trigger" parameter exactly (Phase 5.4).
     /// </summary>
     private static ExpressionSyntax BuildTriggerTopicActivity(string id, Dictionary<string, string> data)
     {
-        var topic = data.GetValueOrDefault("subTopicName", "");
+        var topic = data.GetValueOrDefault("topicToTrigger", "");
         var args = new List<ArgumentSyntax>
         {
             Argument(StringLiteral(id)),

@@ -145,7 +145,7 @@ public static class CSharpToJsonParser
                 id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
                 if (positionalArgs.Count > 1)
                 {
-                    data["subTopicName"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                    data["topicToTrigger"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
                 }
                 if (namedArgs.TryGetValue("waitForCompletion", out var waitExpr))
                 {

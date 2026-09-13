@@ -3,14 +3,16 @@
  * summary (Phase 1.2), the palette (Phase 1.3), the Inspector's field form
  * (Phase 1.5), and (Phase 4.1) each type's real port list.
  *
- * Seeded with the 6 activity types already implemented in
- * docs/conops_interactive_prototype.html (same title/category/color/
- * defaultData/summary logic, ported as-is, not reinvented) -- the roadmap
- * explicitly calls for seeding these 6 and extending to the full 36-shape
- * catalog (docs/activity-shapes.md) in Phase 5. `getActivityDefinition`
- * returns undefined for every other type; callers fall back to generic
- * behavior (plain type name as summary/title, a raw key-value field editor,
- * a generic main-role Input/Output port pair) rather than a lookup crash.
+ * Originally seeded with 6 activity types from docs/conops_interactive_prototype.html
+ * (Phase 1); Phase 5 (#33-#36) extended this to all 36 shapes in
+ * docs/activity-shapes.md, verified field-by-field against the real
+ * ConversaCore classes (not just copied from the doc -- several doc
+ * fields turned out to have no basis in the actual framework, flagged
+ * per-field below rather than silently included). `getActivityDefinition`
+ * returns undefined for any type outside this catalog (e.g.
+ * InvokeToolActivity, #37); callers fall back to generic behavior (plain
+ * type name as summary/title, a raw key-value field editor, a generic
+ * main-role Input/Output port pair) rather than a lookup crash.
  */
 
 import type { DiagramPortDirection, DiagramPortRole, DiagramPortSide } from '../schema/diagram';
@@ -306,13 +308,21 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'Call Subtopic',
     category: 'Flow',
     color: '#8b5cf6',
-    defaultData: { subTopicName: 'QuoteGenerationTopic', waitForCompletion: 'true' },
+    // Phase 5.4: field renamed from `subTopicName` to `topicToTrigger`,
+    // matching both docs/activity-shapes.md and the real constructor's
+    // own parameter name (TriggerTopicActivity(string id, string
+    // topicToTrigger, ...)) exactly. Also renamed in Transcription/
+    // JsonToCSharpTranscriber.cs and CSharpToJsonParser.cs, which DO have
+    // a per-type case for this (one of Phase 3.1's original 4
+    // verified-compilable types), so both directions of the JSON<->C#
+    // round trip needed updating, not just the registry.
+    defaultData: { topicToTrigger: 'QuoteGenerationTopic', waitForCompletion: 'true' },
     fields: [
-      { key: 'subTopicName', label: 'Sub-topic Name', kind: 'text' },
+      { key: 'topicToTrigger', label: 'Topic To Trigger', kind: 'text' },
       { key: 'waitForCompletion', label: 'Wait For Completion', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Subtopic: ${data.subTopicName} (Wait: ${data.waitForCompletion})`,
+    getSummary: (data) => `Subtopic: ${data.topicToTrigger} (Wait: ${data.waitForCompletion})`,
   },
   // Phase 4.4: the 6 branching/"Selection" types (docs/activity-shapes.md).
   // docs/activity-shapes.md's own category note flags these as a *known
@@ -709,6 +719,137 @@ const DEFINITIONS: ActivityDefinition[] = [
     fields: [{ key: 'greeting', label: 'Greeting (not yet transcribable)', kind: 'textarea' }],
     ports: STANDARD_PORTS,
     getSummary: (data) => data.greeting || 'Greeting',
+  },
+  // Phase 5.4: Events/Subroutines + Semantic/AI + Security categories
+  // (docs/activity-shapes.md).
+  {
+    type: 'EventTriggerActivity',
+    title: 'Trigger Event',
+    category: 'Logic',
+    color: '#7c3aed',
+    // Real signature: EventTriggerActivity(string id, string eventName,
+    // object? eventData = null, bool waitForResponse = false, string?
+    // responseContextKey = null, TimeSpan? responseTimeout = null,
+    // ILogger? logger = null, IConversationContext? conversationContext =
+    // null) -- fully literal aside from the optional logger/context.
+    // timeoutMs maps to the real responseTimeout TimeSpan param (same
+    // millisecond convention as DelayActivity's durationMs, Phase 5.1).
+    defaultData: { eventName: 'CustomEvent', waitForResponse: 'false', responseContextKey: '', timeoutMs: '300000' },
+    fields: [
+      { key: 'eventName', label: 'Event Name', kind: 'text' },
+      { key: 'waitForResponse', label: 'Wait For Response', kind: 'boolean' },
+      { key: 'responseContextKey', label: 'Response Context Key', kind: 'text' },
+      { key: 'timeoutMs', label: 'Timeout (ms)', kind: 'number' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Trigger: ${data.eventName}`,
+  },
+  {
+    type: 'ExecuteTopicActivity',
+    title: 'Execute Topic',
+    category: 'Logic',
+    color: '#7c3aed',
+    // Real signature: ExecuteTopicActivity(string id, string topicName,
+    // ITopicRegistry topicRegistry) -- topicName maps directly;
+    // ITopicRegistry is a framework service with no literal JSON form
+    // (generic-fallback transcription only). resultContextKey has no
+    // basis in the real class (no matching property found).
+    defaultData: { topicName: 'SubTopicName', resultContextKey: 'execute-topic-activity-1_TopicResult' },
+    fields: [
+      { key: 'topicName', label: 'Topic Name', kind: 'text' },
+      { key: 'resultContextKey', label: 'Result Context Key (not yet transcribable)', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Execute: ${data.topicName}`,
+  },
+  {
+    type: 'CompleteTopicActivity',
+    title: 'Complete Topic',
+    category: 'Logic',
+    color: '#7c3aed',
+    // Real signature: CompleteTopicActivity(string id, object?
+    // completionData = null, string? completionMessage = null, ILogger?
+    // logger = null, IConversationContext? conversationContext = null).
+    // completionMessage maps directly (CompletionMessage). completionData
+    // is a real param too, but it's `object?`, not a "data key" string --
+    // completionDataKey doesn't match its actual shape. resumeTopicKey has
+    // no basis in the class at all.
+    defaultData: { completionMessage: 'Topic completed', completionDataKey: 'SubTopicCompletionData', resumeTopicKey: 'NextTopic' },
+    fields: [
+      { key: 'completionMessage', label: 'Completion Message', kind: 'textarea' },
+      { key: 'completionDataKey', label: 'Completion Data Key (not yet transcribable)', kind: 'text' },
+      { key: 'resumeTopicKey', label: 'Resume Topic Key (not yet transcribable)', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.completionMessage || 'Complete topic',
+  },
+  {
+    type: 'MultipleTopicsMatchedActivity',
+    title: 'Multiple Topics Matched',
+    category: 'Logic',
+    color: '#7c3aed',
+    // Real signature: MultipleTopicsMatchedActivity(string id, string
+    // message) -- fully literal, message maps directly.
+    defaultData: { message: 'I found multiple matches. Can you clarify?' },
+    fields: [{ key: 'message', label: 'Message', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.message || 'Multiple topics matched',
+  },
+  {
+    type: 'SemanticResponse',
+    title: 'Semantic Response',
+    category: 'AI',
+    color: '#8b5cf6',
+    // The real class is named SemanticResponseActivity (not
+    // SemanticResponse) -- a real naming drift between
+    // docs/activity-shapes.md/this catalog and the framework, same
+    // category as PromptAttentionActivity's (flagged for #38). Real ctor
+    // needs Kernel/ILogger (generic-fallback gap, same as PromptActivity).
+    // collection maps to the real collectionName param; userPromptKey
+    // maps to the real UserPromptContextKey property; skipLlmThreshold
+    // maps to the real SkipLLMThreshold property.
+    defaultData: { collection: 'insurance_basics_intel', userPromptKey: 'Basics_UserPrompt', skipLlmThreshold: '0.9' },
+    fields: [
+      { key: 'collection', label: 'Collection', kind: 'text' },
+      { key: 'userPromptKey', label: 'User Prompt Key', kind: 'text' },
+      { key: 'skipLlmThreshold', label: 'Skip LLM Threshold', kind: 'number' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Semantic response from ${data.collection}`,
+  },
+  {
+    type: 'SemanticQueryActivity',
+    title: 'Semantic Query',
+    category: 'AI',
+    color: '#8b5cf6',
+    // The deepest structural gap in the catalog: real class is
+    // SemanticQueryActivity<TRuleSet, TInput, TOutput> (3 generic type
+    // params, each constrained to a real interface), needs Kernel/ILogger
+    // plus concrete typed ruleSet/input instances passed into its
+    // constructor. None of the doc's parameters (ruleSetType/inputSource/
+    // outputContextKey/runInBackground) correspond to anything in this
+    // signature -- kept entirely for doc-parity, not transcribable at all.
+    defaultData: { ruleSetType: 'DomainRuleSet', inputSource: 'context', outputContextKey: 'output_query_semantic-query-activity-1', runInBackground: 'false' },
+    fields: [
+      { key: 'ruleSetType', label: 'Rule Set Type (not yet transcribable)', kind: 'text' },
+      { key: 'inputSource', label: 'Input Source (not yet transcribable)', kind: 'text' },
+      { key: 'outputContextKey', label: 'Output Context Key (not yet transcribable)', kind: 'text' },
+      { key: 'runInBackground', label: 'Run In Background (not yet transcribable)', kind: 'boolean' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Query: ${data.ruleSetType}`,
+  },
+  {
+    type: 'SignInActivity',
+    title: 'Sign In',
+    category: 'Security',
+    color: '#dc2626',
+    // Real signature: SignInActivity(string id, string message) --
+    // fully literal, message maps directly.
+    defaultData: { message: 'Please sign in to continue' },
+    fields: [{ key: 'message', label: 'Message', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.message || 'Sign in',
   },
 ];
 
