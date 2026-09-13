@@ -404,6 +404,119 @@ const DEFINITIONS: ActivityDefinition[] = [
     ports: branchingPorts((data) => parseDelimitedLabels(data.options, '|')),
     getSummary: (data) => `Q: ${data.question} [${data.options}]`,
   },
+  // Phase 5.2: Iteration + Concurrency + Exception Handling categories
+  // (docs/activity-shapes.md). RepeatActivity, ForEachActivity, and
+  // ParallelActivity all require passing an actual nested TopicFlowActivity
+  // (or, for RepeatActivity, a Func<string, TopicWorkflowContext,
+  // TActivity> factory delegate) into their real constructors -- the same
+  // structural gap as CompositeActivity/SwitchActivity (#29/#33's
+  // comments): there's no literal-JSON way to construct one yet, so their
+  // doc parameters that don't correspond to a real settable property
+  // (loopMode, branchCount) are kept for doc-parity only and flagged
+  // per-field below. OnErrorActivity/FallbackActivity/EscalateActivity are
+  // all simple single-string-message constructors with no such gap.
+  {
+    type: 'RepeatActivity',
+    title: 'Repeat Loop',
+    category: 'Logic',
+    color: '#0891b2',
+    // Real class: RepeatActivity<TActivity>, 3 constructors, all requiring
+    // a Func<string, TopicWorkflowContext, TActivity> activityFactory
+    // delegate (no literal JSON form). `continuePrompt` matches one
+    // constructor's real string param; `collectionKey` matches the
+    // optional collectionContextKey param; `loopMode` is a UI-only
+    // concept (which of the 3 constructors to use) with no single
+    // corresponding real field.
+    defaultData: { loopMode: 'while predicate', collectionKey: 'BasicsLearningLoop_Collection', continuePrompt: 'custom predicate controls continuation' },
+    fields: [
+      { key: 'loopMode', label: 'Loop Mode (not yet transcribable)', kind: 'text' },
+      { key: 'collectionKey', label: 'Collection Key', kind: 'text' },
+      { key: 'continuePrompt', label: 'Continue Prompt', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Repeat while: ${data.continuePrompt}`,
+  },
+  {
+    type: 'ForEachActivity',
+    title: 'For Each',
+    category: 'Logic',
+    color: '#0891b2',
+    // itemKey/indexKey/startMessage/completeMessage are all real settable
+    // properties (ItemContextKey/IndexContextKey/StartMessage/
+    // CompleteMessage); collectionKey matches the real constructor's
+    // collectionContextKey -- but that constructor also requires a
+    // TopicFlowActivity childActivity, not yet representable.
+    defaultData: { collectionKey: 'Items', itemKey: 'item', indexKey: 'index', startMessage: '', completeMessage: '' },
+    fields: [
+      { key: 'collectionKey', label: 'Collection Key', kind: 'text' },
+      { key: 'itemKey', label: 'Item Key', kind: 'text' },
+      { key: 'indexKey', label: 'Index Key', kind: 'text' },
+      { key: 'startMessage', label: 'Start Message', kind: 'text' },
+      { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `For each in ${data.collectionKey}`,
+  },
+  {
+    type: 'ParallelActivity',
+    title: 'Parallel Branches',
+    category: 'Logic',
+    color: '#0891b2',
+    // continueOnError/completeMessage are real settable properties
+    // (ContinueOnError/CompleteMessage). branchCount has no basis in the
+    // real class -- ParallelActivity(string id, IEnumerable<TopicFlowActivity>
+    // activities) takes actual branches, not a count.
+    defaultData: { branchCount: '2', continueOnError: 'false', completeMessage: '' },
+    fields: [
+      { key: 'branchCount', label: 'Branch Count (not yet transcribable)', kind: 'number' },
+      { key: 'continueOnError', label: 'Continue On Error', kind: 'boolean' },
+      { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `${data.branchCount} parallel branches`,
+  },
+  {
+    type: 'OnErrorActivity',
+    title: 'On Error',
+    category: 'Exception Handling',
+    color: '#ef4444',
+    // Real signature: OnErrorActivity(string id, string message) -- errorMessage maps directly.
+    defaultData: { errorMessage: 'An unexpected error occurred.' },
+    fields: [{ key: 'errorMessage', label: 'Error Message', kind: 'textarea' }],
+    // Matches docs/activity-shapes.md exactly: no Exception port -- this
+    // activity IS the error handler, it doesn't escalate its own errors
+    // through a further Exception port.
+    ports: [MAIN_INPUT, MAIN_OUTPUT, CONTROL_OUTPUT],
+    getSummary: (data) => data.errorMessage || 'Handle error',
+  },
+  {
+    type: 'FallbackActivity',
+    title: 'Fallback',
+    category: 'Exception Handling',
+    color: '#ef4444',
+    // Real signature: FallbackActivity(string id, string message) -- message
+    // maps directly. fallbackFlagKey has no basis in the real class: its
+    // RunActivity() hardcodes context.SetValue("FallbackTriggered", true) --
+    // not configurable, so not included as a field (would have no effect).
+    defaultData: { message: 'Sorry, I did not understand that.' },
+    fields: [{ key: 'message', label: 'Message', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.message || 'Fallback message',
+  },
+  {
+    type: 'EscalateActivity',
+    title: 'Escalate to Human',
+    category: 'Exception Handling',
+    color: '#ef4444',
+    // Real signature: EscalateActivity(string id, string message) --
+    // escalationMessage maps directly. escalationFlagKey has no basis in
+    // the real class (hardcodes context.SetValue("EscalationRequested", true)
+    // the same way FallbackActivity does) -- not included as a field.
+    defaultData: { escalationMessage: 'Transferring to a human agent' },
+    fields: [{ key: 'escalationMessage', label: 'Escalation Message', kind: 'textarea' }],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => data.escalationMessage || 'Escalate to human',
+  },
 ];
 
 const BY_TYPE: Record<string, ActivityDefinition> = Object.fromEntries(

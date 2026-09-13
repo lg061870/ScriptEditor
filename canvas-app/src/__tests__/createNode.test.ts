@@ -38,10 +38,10 @@ describe('createDiagramNode port roles', () => {
   });
 
   it('falls back to an explicit generic main-role Input/Output pair for an unseeded type', () => {
-    // OnErrorActivity is a real catalog type (docs/activity-shapes.md) but
-    // not yet one of the 6 seeded in registry/activityDefinitions.ts --
-    // full-catalog port population is Phase 5, not this task.
-    const node = createDiagramNode('OnErrorActivity', { x: 0, y: 0 });
+    // SignInActivity is a real catalog type (docs/activity-shapes.md) but
+    // not yet seeded in registry/activityDefinitions.ts -- full-catalog
+    // port population is spread across several later Phase 5 tasks.
+    const node = createDiagramNode('SignInActivity', { x: 0, y: 0 });
 
     expect(node.ports.map((p) => [p.name, p.direction, p.role])).toEqual([
       ['Input', 'input', 'main'],
