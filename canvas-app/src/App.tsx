@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { Inspector } from './components/Inspector';
-import { CodePreview } from './components/CodePreview';
+import { CodePanel } from './components/CodePanel';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
 import { useDiagramStore } from './store/diagramStore';
 
@@ -200,7 +200,7 @@ function CanvasApp() {
           />
         )}
       </div>
-      <CodePreview document={document} />
+      <CodePanel document={document} />
     </div>
   );
 }

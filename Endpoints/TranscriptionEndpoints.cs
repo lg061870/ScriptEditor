@@ -3,12 +3,14 @@ using ScriptEditor.Transcription;
 
 namespace ScriptEditor.Endpoints;
 
-// json-to-csharp is now real (Phase 3.1, JsonToCSharpTranscriber).
-// csharp-to-json is still the Phase 0.5 stub -- real parsing is Phase 3.2.
+// Both directions are real: json-to-csharp (Phase 3.1, JsonToCSharpTranscriber)
+// and csharp-to-json (Phase 3.2, CSharpToJsonParser).
 
 public sealed record JsonToCSharpResponse(string CSharp);
 
 public sealed record CSharpToJsonRequest(string Code);
+
+public sealed record CSharpToJsonErrorResponse(string Error);
 
 public static class TranscriptionEndpoints
 {
@@ -25,49 +27,19 @@ public static class TranscriptionEndpoints
 
         group.MapPost("/csharp-to-json", (CSharpToJsonRequest request) =>
         {
-            // Stub: the real Phase 3.2 parser will walk the C# AST's
-            // BuildWorkflow() Add(...) calls and reconstruct this document.
-            var fixture = new DiagramDocumentV2
+            try
             {
-                Nodes =
-                [
-                    new DiagramNodeV2
-                    {
-                        Id = "n1",
-                        Type = "SimpleActivity",
-                        Name = "greet",
-                        X = 0,
-                        Y = 0,
-                        Ports =
-                        [
-                            new DiagramPortV2 { Id = "n1-in", Name = "Input", Direction = DiagramPortDirectionV2.Input, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Left },
-                            new DiagramPortV2 { Id = "n1-out", Name = "Output", Direction = DiagramPortDirectionV2.Output, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Right }
-                        ]
-                    },
-                    new DiagramNodeV2
-                    {
-                        Id = "n2",
-                        Type = "EndActivity",
-                        X = 260,
-                        Y = 0,
-                        Ports =
-                        [
-                            new DiagramPortV2 { Id = "n2-in", Name = "Input", Direction = DiagramPortDirectionV2.Input, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Left }
-                        ]
-                    }
-                ],
-                Edges =
-                [
-                    new DiagramEdgeV2
-                    {
-                        Id = "e1",
-                        From = new DiagramEndpointV2 { Node = "n1", Port = "n1-out" },
-                        To = new DiagramEndpointV2 { Node = "n2", Port = "n2-in" }
-                    }
-                ]
-            };
-
-            return Results.Ok(fixture);
+                var document = CSharpToJsonParser.Parse(request.Code);
+                return Results.Ok(document);
+            }
+            catch (FormatException ex)
+            {
+                // Real Phase 3.5 (syntax-error surfacing without corrupting
+                // the last-valid document) belongs on the frontend, which
+                // must keep its own last-good state and only apply a
+                // successful parse -- this 400 is what makes that possible.
+                return Results.BadRequest(new CSharpToJsonErrorResponse(ex.Message));
+            }
         })
         .WithName("TranscribeCSharpToJson");
     }
