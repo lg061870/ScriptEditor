@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type DragEvent } from 'react';
+import { useCallback, useMemo, useState, type DragEvent } from 'react';
 import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, useReactFlow, type OnNodesChange, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
@@ -6,6 +6,7 @@ import { RoleEdge } from './components/RoleEdge';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { Inspector } from './components/Inspector';
 import { CodePanel } from './components/CodePanel';
+import { ChatPreviewPanel } from './components/ChatPreviewPanel';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
 import { useDiagramStore } from './store/diagramStore';
 
@@ -30,6 +31,7 @@ function CanvasApp() {
   const selectedNodeIds = useDiagramStore((s) => s.selectedNodeIds);
   const pendingConnection = useDiagramStore((s) => s.pendingConnection);
   const { screenToFlowPosition } = useReactFlow();
+  const [showPreview, setShowPreview] = useState(false);
 
   const onUpdateNodeData = useCallback((nodeId: string, key: string, value: string) => {
     useDiagramStore.getState().updateNodeData(nodeId, key, value, 'Inspector');
@@ -179,7 +181,7 @@ function CanvasApp() {
           onCancelPending={() => useDiagramStore.getState().setPendingConnection(null)}
           onPick={handlePickForPendingConnection}
         />
-        <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver} data-testid="canvas-surface">
+        <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver} data-testid="canvas-surface">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -194,6 +196,29 @@ function CanvasApp() {
             <Controls />
             <MiniMap />
           </ReactFlow>
+          {!showPreview && (
+            <button
+              type="button"
+              onClick={() => setShowPreview(true)}
+              data-testid="open-preview-button"
+              style={{
+                position: 'absolute',
+                top: 10,
+                right: 10,
+                zIndex: 5,
+                border: 'none',
+                background: '#4f46e5',
+                color: '#fff',
+                borderRadius: 6,
+                padding: '6px 12px',
+                fontSize: 12,
+                cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+              }}
+            >
+              ▶ Preview
+            </button>
+          )}
         </div>
         {selectedNode && (
           <Inspector
@@ -202,6 +227,7 @@ function CanvasApp() {
             onClose={() => useDiagramStore.getState().setSelection(new Set())}
           />
         )}
+        {showPreview && <ChatPreviewPanel document={document} onClose={() => setShowPreview(false)} />}
       </div>
       <CodePanel document={document} />
     </div>
