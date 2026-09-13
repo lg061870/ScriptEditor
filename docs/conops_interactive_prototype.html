@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ScriptEditor Concept of Operations - Live Interactive Prototype</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .flow-wire {
+      stroke-dasharray: 6 6;
+      animation: wireFlow 1.5s linear infinite;
+    }
+    @keyframes wireFlow {
+      from { stroke-dashoffset: 12; }
+      to { stroke-dashoffset: 0; }
+    }
+    .grid-bg {
+      background-size: 24px 24px;
+      background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] min-h-screen p-4 flex flex-col gap-4">
+
+  <!-- Top Navigation Bar -->
+  <header class="flex items-center justify-between bg-[var(--card)] border border-[var(--border)] rounded-xl px-5 py-3 shadow-sm">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white font-bold flex items-center justify-center text-sm shadow">
+        SE
+      </div>
+      <div>
+        <h1 class="font-bold text-base flex items-center gap-2">
+          ScriptEditor
+          <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">To-Be CONOPS Prototype</span>
+        </h1>
+        <p class="text-xs text-[var(--muted-foreground)]">n8n Canvas • JSON Single Source of Truth (SSOT) • Bi-Directional C# Sync • ConversaCore.UI</p>
+      </div>
+    </div>
+
+    <!-- Mode Selector Tabs -->
+    <div class="flex items-center bg-[var(--sidebar)] p-1 rounded-lg border border-[var(--border)] text-xs font-medium">
+      <button id="btnTabStudio" onclick="switchView('studio')" class="px-3 py-1.5 rounded-md bg-[var(--card)] text-[var(--foreground)] shadow-sm font-semibold transition flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+        Studio (3-Pane View)
+      </button>
+      <button id="btnTabCanvas" onclick="switchView('canvas')" class="px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition">
+        Canvas + Drawer & Code
+      </button>
+      <button id="btnTabChat" onclick="switchView('chat')" class="px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition flex items-center gap-1.5">
+        Canvas + Chatbot
+      </button>
+      <button id="btnTabProtocol" onclick="switchView('protocol')" class="px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition">
+        Anti-Loop Protocol
+      </button>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        JSON SSOT: v<span id="versionLabel">1</span>
+      </span>
+    </div>
+  </header>
+
+  <!-- Reactive Trigger Pipeline Tracker Banner -->
+  <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-xs flex flex-wrap items-center justify-between shadow-xs gap-2">
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="font-semibold text-indigo-400">⚡ Reactive Pipeline:</span>
+      <span id="stepAction" class="text-[var(--muted-foreground)]">1. User Action</span>
+      <span class="text-indigo-400 font-bold">➔</span>
+      <span id="stepJson" class="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">2. JSON Struct Mutated</span>
+      <span class="text-indigo-400 font-bold">➔</span>
+      <span id="stepCanvas" class="text-[var(--muted-foreground)]">3. Trigger: Canvas Redrawn</span>
+      <span class="text-indigo-400 font-bold">➔</span>
+      <span id="stepCode" class="text-[var(--muted-foreground)]">4. Trigger: C# Code Transcribed</span>
+      <span class="text-indigo-400 font-bold">➔</span>
+      <span id="stepDrawer" class="text-[var(--muted-foreground)]">5. Property Drawer Configured</span>
+    </div>
+    <div id="pipelineStatus" class="font-mono text-[11px] text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded border border-emerald-500/20">
+      Ready • State Synchronized
+    </div>
+  </div>
+
+  <!-- Main View Container -->
+  <div class="flex-1 grid grid-cols-12 gap-4 relative min-h-[640px]">
+
+    <!-- 1. CANVAS VIEW -->
+    <div id="canvasContainer" class="col-span-12 lg:col-span-6 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm relative transition-all duration-200">
+      
+      <!-- Canvas Toolbar -->
+      <div class="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5 bg-[var(--sidebar)]/50 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="text-[var(--muted-foreground)] font-medium">Active Topic:</span>
+          <span class="font-semibold text-indigo-400">LeadIntakeTopic.cs</span>
+          <span class="text-[var(--muted-foreground)]">•</span>
+          <span id="nodeCountBadge" class="text-[var(--muted-foreground)] font-mono">3 Nodes</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <!-- Button opens Activity Picker Modal -->
+          <button onclick="openActivityPickerModal()" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+            <span class="font-bold text-sm leading-none">+</span> Add Activity
+          </button>
+          <button onclick="resetDemo()" class="px-2.5 py-1 bg-[var(--card)] border border-[var(--border)] hover:bg-[var(--sidebar)] rounded-lg text-xs text-[var(--muted-foreground)] transition">
+            Reset Flow
+          </button>
+        </div>
+      </div>
+
+      <!-- Interactive Canvas Board -->
+      <div class="flex-1 grid-bg relative overflow-auto p-6 select-none" id="canvasBoard">
+        <!-- SVG Connections Layer -->
+        <svg id="svgConnections" class="absolute inset-0 w-full h-full pointer-events-none z-0">
+          <!-- Dynamic paths drawn via JS -->
+        </svg>
+
+        <!-- Nodes Render Layer -->
+        <div id="nodesLayer" class="relative z-10 flex items-center gap-14 min-h-[460px] flex-wrap">
+          <!-- Dynamic Nodes Rendered by JS -->
+        </div>
+
+        <!-- Hint Overlay -->
+        <div class="absolute bottom-3 left-4 text-[11px] text-[var(--muted-foreground)] flex items-center gap-1.5 pointer-events-none bg-[var(--card)]/90 backdrop-blur px-3 py-1.5 rounded-lg border border-[var(--border)] shadow-xs">
+          <span>💡 <strong>Tip:</strong> Click any node to configure in drawer, or click the <strong class="text-rose-400">✕</strong> icon on any shape to delete it from the JSON struct (triggers canvas & code updates).</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 2. PROPERTY DRAWER & CODE/JSON INSPECTOR -->
+    <div id="inspectorContainer" class="col-span-12 lg:col-span-3 flex flex-col gap-4 transition-all duration-200">
+
+      <!-- Property Drawer Panel -->
+      <div id="nodeDrawer" class="flex-1 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm">
+        
+        <div class="p-3 border-b border-[var(--border)] bg-[var(--sidebar)] flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span id="drawerBadge" class="w-3 h-3 rounded-full bg-indigo-500"></span>
+            <div>
+              <h2 id="drawerTitle" class="text-xs font-bold truncate">Node Configuration</h2>
+              <p id="drawerSubtitle" class="text-[10px] text-[var(--muted-foreground)] font-mono">Type: SimpleActivity</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-1.5 py-0.5 rounded bg-[var(--card)] border border-[var(--border)] text-indigo-400 font-semibold uppercase">
+            Drawer
+          </span>
+        </div>
+
+        <!-- Drawer Body Form -->
+        <div class="p-3.5 flex-1 overflow-y-auto flex flex-col gap-3 text-xs">
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Node ID (Unique Identifier)</label>
+            <input id="inputNodeId" type="text" oninput="onDrawerInputChange('id', this.value)" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] focus:outline-none focus:border-indigo-500 font-mono" />
+          </div>
+
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Display Title</label>
+            <input id="inputNodeTitle" type="text" oninput="onDrawerInputChange('title', this.value)" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] focus:outline-none focus:border-indigo-500" />
+          </div>
+
+          <!-- Dynamic Schema-Driven Activity Parameters -->
+          <div id="dynamicFormFields" class="flex flex-col gap-3 pt-2 border-t border-[var(--border)]">
+            <!-- Populated based on activity type -->
+          </div>
+
+          <div class="pt-2 border-t border-[var(--border)]">
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Context Variable Writes</label>
+            <input id="inputNodeWrites" type="text" oninput="onDrawerInputChange('writes', this.value)" placeholder="e.g. LeadScore, CustomerEmail" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] focus:outline-none focus:border-indigo-500 font-mono" />
+          </div>
+
+          <div class="pt-2 border-t border-[var(--border)] flex items-center justify-between">
+            <button onclick="deleteActivityNode(selectedNodeId)" class="px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[11px] font-medium transition cursor-pointer flex items-center gap-1 active:scale-95">
+              <span>✕</span> Delete Activity
+            </button>
+            <span class="text-[10px] text-[var(--muted-foreground)]">Mutates JSON SSOT</span>
+          </div>
+
+          <div class="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-2.5 text-[10px] text-indigo-400 leading-relaxed">
+            <strong>Reactive SSOT Sync:</strong> Modifying any parameter writes directly to the <strong>JSON Struct</strong>. Triggers immediately redraw the canvas card and re-transcribe the C# code.
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Live Code / JSON Tabs Container -->
+      <div class="h-60 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm">
+        <div class="flex items-center justify-between border-b border-[var(--border)] px-3 py-2 bg-[var(--sidebar)] text-xs">
+          <div class="flex items-center gap-1 bg-[var(--card)] p-0.5 rounded border border-[var(--border)]">
+            <button id="btnTabCode" onclick="switchInspectorTab('code')" class="px-2 py-0.5 rounded text-[11px] font-semibold text-indigo-400 bg-[var(--sidebar)] shadow-xs">
+              C# Topic
+            </button>
+            <button id="btnTabJson" onclick="switchInspectorTab('json')" class="px-2 py-0.5 rounded text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+              SSOT JSON
+            </button>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button onclick="simulateCodeDeleteLastActivity()" title="Simulate deleting statement in code editor" class="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] border border-rose-500/20 font-sans transition">
+              ✂ Simulate Code Delete
+            </button>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-auto p-3 font-mono text-[11px] bg-[var(--sidebar)]/30">
+          <pre id="codeDisplay" class="text-[var(--foreground)] whitespace-pre-wrap"></pre>
+          <pre id="jsonDisplay" class="text-[var(--foreground)] whitespace-pre-wrap hidden"></pre>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 3. CONVERSACORE.UI CHATBOT CONTAINER -->
+    <div id="chatbotContainer" class="col-span-12 lg:col-span-3 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm transition-all duration-200">
+      
+      <!-- Chatbot Header with Compile/Reset Button -->
+      <div class="p-3 border-b border-[var(--border)] bg-[var(--sidebar)] flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-xs border border-emerald-500/30">
+            🤖
+          </div>
+          <div>
+            <h2 class="text-xs font-semibold flex items-center gap-1.5">
+              ConversaCore.UI
+              <span id="chatCompiledBadge" class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">v1 Compiled</span>
+            </h2>
+            <p id="chatPendingNotice" class="text-[10px] text-[var(--muted-foreground)] truncate">Ready for live conversation</p>
+          </div>
+        </div>
+
+        <!-- THE RESET BUTTON (Triggers Roslyn in-memory emit & fresh ALC) -->
+        <button id="btnResetChat" onclick="onResetChatbotClick()" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium flex items-center gap-1 shadow-sm transition active:scale-95">
+          <span>↺</span> Reset Chat
+        </button>
+      </div>
+
+      <!-- Chat Conversation History -->
+      <div id="chatMessages" class="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 min-h-[380px] max-h-[500px] bg-[var(--sidebar)]/20 text-xs">
+        <!-- Messages populated dynamically -->
+      </div>
+
+      <!-- Chat Input Box -->
+      <div class="p-2.5 border-t border-[var(--border)] bg-[var(--card)] flex gap-2">
+        <input id="chatInput" type="text" placeholder="Type a message to test topic..." onkeydown="if(event.key==='Enter') sendUserMessage()" class="flex-1 bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1.5 text-xs text-[var(--foreground)] focus:outline-none focus:border-indigo-500" />
+        <button onclick="sendUserMessage()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-medium transition">
+          Send
+        </button>
+      </div>
+
+    </div>
+
+    <!-- 4. PROTOCOL EXPLANATION VIEW (Hidden by default) -->
+    <div id="protocolView" class="col-span-12 hidden flex-col gap-4 bg-[var(--card)] border border-[var(--border)] rounded-xl p-6 shadow-sm">
+      <div class="max-w-4xl">
+        <h2 class="text-base font-bold mb-1 text-indigo-400">Anti-Loop & Anti-Deadlock Concurrency Protocol</h2>
+        <p class="text-xs text-[var(--muted-foreground)] mb-4">
+          How ScriptEditor guarantees seamless bi-directional synchronization between Canvas, JSON, and C# code without circular event deadlocks.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div class="bg-[var(--sidebar)] p-4 rounded-xl border border-[var(--border)]">
+            <div class="text-sm font-semibold mb-1 text-emerald-400">1. Origin Tagging</div>
+            <p class="text-xs text-[var(--muted-foreground)]">
+              Every mutation is tagged with an <code class="text-indigo-400">Origin</code> (<code class="text-indigo-300">ActivityPicker</code>, <code class="text-indigo-300">NodeDrawer</code>, <code class="text-indigo-300">Canvas</code>, <code class="text-indigo-300">CodeEditor</code>). Triggers carry this origin token.
+            </p>
+          </div>
+
+          <div class="bg-[var(--sidebar)] p-4 rounded-xl border border-[var(--border)]">
+            <div class="text-sm font-semibold mb-1 text-blue-400">2. Echo Suppression</div>
+            <p class="text-xs text-[var(--muted-foreground)]">
+              When a component receives a state update, it checks <code class="text-indigo-400">origin == self.id</code>. If it originated the change, it drops the broadcast to prevent ping-pong echoing.
+            </p>
+          </div>
+
+          <div class="bg-[var(--sidebar)] p-4 rounded-xl border border-[var(--border)]">
+            <div class="text-sm font-semibold mb-1 text-amber-400">3. Version Stamping</div>
+            <p class="text-xs text-[var(--muted-foreground)]">
+              Each JSON mutation increments a monotonic <code class="text-indigo-400">versionId</code>. Out-of-order or stale parse events are rejected atomically.
+            </p>
+          </div>
+        </div>
+
+        <div class="border border-[var(--border)] rounded-xl p-4 bg-black/30">
+          <div class="font-semibold text-xs mb-2 flex items-center justify-between">
+            <span>Simulated Live Transaction Log:</span>
+            <span class="text-[10px] text-[var(--muted-foreground)] font-mono">Reactive SSOT Events</span>
+          </div>
+          <div id="txLog" class="font-mono text-[11px] text-[var(--muted-foreground)] flex flex-col gap-1 max-h-56 overflow-y-auto">
+            <div>[00:00:01] System initialized. Document version: v1. Origin: System</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Activity Picker Modal (ConversaCore Library Catalog) -->
+  <div id="activityPickerModal" class="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 hidden p-4">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="px-5 py-4 border-b border-[var(--border)] bg-[var(--sidebar)] flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+            <span>Add Activity from ConversaCore Library</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">Assembly Reflection</span>
+          </h2>
+          <p class="text-[11px] text-[var(--muted-foreground)]">Pick an activity. It will be added to the <strong>JSON Struct first</strong>, triggering Canvas & Code updates.</p>
+        </div>
+        <button onclick="closeActivityPickerModal()" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] text-xl leading-none font-bold p-1">×</button>
+      </div>
+
+      <!-- Modal Catalog Grid -->
+      <div class="p-5 flex flex-col gap-5 max-h-[500px] overflow-y-auto text-xs">
+        
+        <!-- Category 1: Messaging & Cards -->
+        <div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-blue-400 block mb-2.5">Messaging & Interactive Cards</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button onclick="selectActivityToAdd('SimpleActivity', 'Bot Message', 'Messaging', 'blue', { message: 'Thank you for your response! How can I assist you further?' }, [])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-blue-500 hover:bg-blue-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-blue-400">SimpleActivity</span>
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Send a static text message or execute lightweight inline messaging.</span>
+            </button>
+
+            <button onclick="selectActivityToAdd('AdaptiveCardActivity', 'User Form', 'Cards', 'emerald', { cardName: 'LeadIntakeCard', modelName: 'LeadIntakeModel' }, ['LeadContact'])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-emerald-500 hover:bg-emerald-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-emerald-400">AdaptiveCardActivity</span>
+                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Render an interactive form with typed inputs, validation, and context writes.</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Category 2: Flow Control & Interaction -->
+        <div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400 block mb-2.5">Flow Control & User Choices</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button onclick="selectActivityToAdd('QuickAnswerActivity', 'Quick Choices', 'Interaction', 'amber', { question: 'Would you like an instant quote or to talk to an agent?', options: 'Instant Quote | Talk to Agent | More Info' }, ['UserChoice'])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-amber-500 hover:bg-amber-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-amber-400">QuickAnswerActivity</span>
+                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Prompt user with clickable chip buttons and store chosen choice in context.</span>
+            </button>
+
+            <button onclick="selectActivityToAdd('DelayActivity', 'Pacing Pause', 'Flow', 'blue', { durationSec: 2, showTyping: 'true' }, [])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-blue-500 hover:bg-blue-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-blue-400">DelayActivity</span>
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Pause between turns with optional typing indicator for natural pacing.</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Category 3: AI Reasoning & Topic Orchestration -->
+        <div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-purple-400 block mb-2.5">AI Reasoning & Subtopics</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button onclick="selectActivityToAdd('PromptActivity', 'Risk Analysis AI', 'AI', 'purple', { prompt: 'Analyze customer lead profile and score risk tier.', model: 'gpt-4o-mini' }, ['RiskRating'])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-purple-500 hover:bg-purple-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-purple-400">PromptActivity</span>
+                <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Invoke Semantic Kernel LLM for prompt-driven classification or reasoning.</span>
+            </button>
+
+            <button onclick="selectActivityToAdd('TriggerTopicActivity', 'Call Subtopic', 'Flow', 'purple', { subTopicName: 'QuoteGenerationTopic', waitForCompletion: 'true' }, ['QuoteResult'])" class="p-3 rounded-xl border border-[var(--border)] bg-[var(--sidebar)]/50 hover:border-purple-500 hover:bg-purple-500/5 text-left transition flex flex-col gap-1 group cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-[var(--foreground)] group-hover:text-purple-400">TriggerTopicActivity</span>
+                <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)]">Hand-down control to a separate subtopic workflow and wait for completion.</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="px-5 py-3 border-t border-[var(--border)] bg-[var(--sidebar)] flex items-center justify-between">
+        <span class="text-[11px] text-[var(--muted-foreground)]">Activities dynamically extracted via reflection from ConversaCore.dll</span>
+        <button onclick="closeActivityPickerModal()" class="px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // JSON SINGLE SOURCE OF TRUTH (SSOT STATE)
+    // ==========================================
+    const documentState = {
+      version: 1,
+      topicName: "LeadIntakeTopic",
+      nodes: [
+        {
+          id: "greet-1",
+          type: "SimpleActivity",
+          title: "Welcome User",
+          category: "Messaging",
+          color: "blue",
+          data: {
+            message: "Hello! Welcome to the Insurance Quote Assistant."
+          },
+          writes: []
+        },
+        {
+          id: "card-form-2",
+          type: "AdaptiveCardActivity",
+          title: "Contact Info Form",
+          category: "Cards",
+          color: "emerald",
+          data: {
+            cardName: "ContactInfoCard",
+            modelName: "ContactInfoModel"
+          },
+          writes: ["LeadContact"]
+        },
+        {
+          id: "ai-decision-3",
+          type: "PromptActivity",
+          title: "Risk Assessment AI",
+          category: "AI",
+          color: "purple",
+          data: {
+            prompt: "Classify lead risk tier based on ContactInfo.",
+            model: "gpt-4o-mini"
+          },
+          writes: ["RiskTier"]
+        }
+      ]
+    };
+
+    let selectedNodeId = "greet-1";
+    let activeView = "studio";
+    let activeInspectorTab = "code";
+    let compiledVersion = 1;
+    let pendingChanges = false;
+
+    // Transaction logger for Anti-Loop protocol
+    function logTx(origin, action) {
+      const time = new Date().toLocaleTimeString();
+      const log = document.getElementById('txLog');
+      if (!log) return;
+      const entry = document.createElement('div');
+      entry.innerHTML = `[${time}] <span class="text-indigo-400 font-semibold">Origin: ${origin}</span> • v${documentState.version} • ${action}`;
+      log.prepend(entry);
+    }
+
+    // ==========================================
+    // REACTIVE MUTATION ENGINE (JSON SSOT)
+    // ==========================================
+    // All changes mutate the JSON struct first, then triggers update canvas and code!
+    function mutateState(origin, mutationFn) {
+      documentState.version += 1;
+      mutationFn();
+      
+      document.getElementById('versionLabel').innerText = documentState.version;
+      
+      pendingChanges = true;
+      const notice = document.getElementById('chatPendingNotice');
+      const badge = document.getElementById('chatCompiledBadge');
+      if (notice) notice.innerText = `● Changes pending (Click Reset to recompile)`;
+      if (badge) {
+        badge.innerText = `v${compiledVersion} (Stale)`;
+        badge.className = "text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono";
+      }
+
+      logTx(origin, `JSON SSOT mutated (v${documentState.version})`);
+
+      // Fire Reactive Triggers
+      renderCanvas();
+      renderDrawer();
+      renderTranscribedCode();
+      renderJsonView();
+    }
+
+    // Update banner pipeline indicator
+    function updatePipelineBanner(stepText, statusText) {
+      const statusEl = document.getElementById('pipelineStatus');
+      if (statusEl) {
+        statusEl.innerText = statusText || "State Synchronized";
+      }
+    }
+
+    // ==========================================
+    // MODAL & ACTIVITY PICKER
+    // ==========================================
+    function openActivityPickerModal() {
+      document.getElementById('activityPickerModal').classList.remove('hidden');
+      updatePipelineBanner(null, "Browsing ConversaCore Activity Palette...");
+    }
+
+    function closeActivityPickerModal() {
+      document.getElementById('activityPickerModal').classList.add('hidden');
+      updatePipelineBanner(null, "Ready • State Synchronized");
+    }
+
+    // Step 1 ➔ Step 2: Add Activity directly to JSON STRUCT, then triggers fire!
+    function selectActivityToAdd(type, title, category, color, defaultData, defaultWrites) {
+      closeActivityPickerModal();
+
+      const newId = `${type.toLowerCase().replace('activity', '')}-${documentState.nodes.length + 1}`;
+      
+      // Mutate JSON STRUCT first!
+      mutateState("ActivityPalette", () => {
+        const newNode = {
+          id: newId,
+          type: type,
+          title: title,
+          category: category,
+          color: color,
+          data: { ...defaultData },
+          writes: defaultWrites || []
+        };
+        documentState.nodes.push(newNode);
+        selectedNodeId = newId;
+      });
+
+      // Update banner pipeline tracker
+      updatePipelineBanner(null, `⚡ Added '${type}' to JSON SSOT ➔ Canvas & Code triggers fired ➔ Drawer ready!`);
+    }
+
+    // Delete Activity: Mutates JSON STRUCT first, then triggers update canvas and code!
+    function deleteActivityNode(id) {
+      if (documentState.nodes.length <= 1) {
+        alert("At least one activity should remain in the topic flow.");
+        return;
+      }
+
+      mutateState("CanvasShapeDelete", () => {
+        const index = documentState.nodes.findIndex(n => n.id === id);
+        if (index !== -1) {
+          const removed = documentState.nodes.splice(index, 1)[0];
+          logTx("CanvasShape", `Clicked '✕' on shape. Deleted '${removed.id}' from JSON SSOT.`);
+
+          if (selectedNodeId === id) {
+            const nextIndex = Math.min(index, documentState.nodes.length - 1);
+            selectedNodeId = documentState.nodes[nextIndex].id;
+          }
+        }
+      });
+
+      updatePipelineBanner(null, `⚡ Deleted '${id}' from JSON SSOT ➔ Canvas redrawn (wires healed) & C# Code updated!`);
+    }
+
+    // ==========================================
+    // CANVAS TRIGGER: RENDER NODES & WIRES
+    // ==========================================
+    function renderCanvas() {
+      const container = document.getElementById('nodesLayer');
+      const svg = document.getElementById('svgConnections');
+      if (!container || !svg) return;
+
+      container.innerHTML = '';
+      svg.innerHTML = '';
+
+      document.getElementById('nodeCountBadge').innerText = `${documentState.nodes.length} Nodes`;
+
+      documentState.nodes.forEach((node, index) => {
+        const isSelected = node.id === selectedNodeId;
+        const card = document.createElement('div');
+        card.id = `node-${node.id}`;
+        card.className = `w-56 bg-[var(--card)] border-2 ${isSelected ? 'border-indigo-500 shadow-md ring-2 ring-indigo-500/20' : 'border-[var(--border)]'} rounded-xl p-3 cursor-pointer transition-all hover:border-indigo-400 hover:shadow-sm relative group`;
+        card.onclick = () => selectNode(node.id);
+
+        const categoryColors = {
+          blue: "bg-blue-500",
+          emerald: "bg-emerald-500",
+          purple: "bg-purple-500",
+          amber: "bg-amber-500"
+        };
+        const dotColor = categoryColors[node.color] || "bg-indigo-500";
+
+        card.innerHTML = `
+          <!-- Input Port -->
+          ${index > 0 ? `<div class="absolute -left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-[var(--card)] border-2 border-indigo-500 flex items-center justify-center shadow-xs"><div class="w-1.5 h-1.5 rounded-full bg-indigo-500"></div></div>` : ''}
+
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full ${dotColor}"></span>
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">${node.category}</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] text-[var(--muted-foreground)] font-mono">${node.id}</span>
+              <!-- Delete 'x' Icon Button -->
+              <button onclick="event.stopPropagation(); deleteActivityNode('${node.id}')" title="Delete Activity (Mutates JSON SSOT)" class="w-4 h-4 rounded flex items-center justify-center text-[11px] text-[var(--muted-foreground)] hover:text-white hover:bg-rose-600 transition cursor-pointer leading-none font-bold" aria-label="Delete">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- Body -->
+          <h3 class="font-semibold text-xs mb-1 text-[var(--foreground)] truncate">${node.title}</h3>
+          <p class="text-[11px] text-[var(--muted-foreground)] line-clamp-2">${getNodeSummary(node)}</p>
+
+          ${node.writes && node.writes.length ? `
+            <div class="mt-2 pt-2 border-t border-[var(--border)] flex items-center gap-1 text-[10px] text-indigo-400">
+              <span>✍ writes:</span>
+              <span class="font-mono truncate">${node.writes.join(', ')}</span>
+            </div>
+          ` : ''}
+
+          <!-- Output Port -->
+          ${index < documentState.nodes.length - 1 ? `<div class="absolute -right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-[var(--card)] border-2 border-indigo-500 flex items-center justify-center shadow-xs"><div class="w-1.5 h-1.5 rounded-full bg-indigo-500"></div></div>` : ''}
+        `;
+
+        container.appendChild(card);
+      });
+
+      setTimeout(drawWires, 30);
+    }
+
+    function getNodeSummary(node) {
+      if (node.type === "SimpleActivity") return node.data.message || "Send static bot message";
+      if (node.type === "AdaptiveCardActivity") return `Card: ${node.data.cardName} (${node.data.modelName})`;
+      if (node.type === "PromptActivity") return `Prompt: ${node.data.prompt}`;
+      if (node.type === "QuickAnswerActivity") return `Q: ${node.data.question} [${node.data.options}]`;
+      if (node.type === "DelayActivity") return `Pause: ${node.data.durationSec}s (Typing: ${node.data.showTyping})`;
+      if (node.type === "TriggerTopicActivity") return `Subtopic: ${node.data.subTopicName} (Wait: ${node.data.waitForCompletion})`;
+      return node.type;
+    }
+
+    function drawWires() {
+      const svg = document.getElementById('svgConnections');
+      if (!svg) return;
+      svg.innerHTML = '';
+      const nodes = documentState.nodes;
+      const board = document.getElementById('canvasBoard');
+      if (!board) return;
+
+      const boardRect = board.getBoundingClientRect();
+
+      for (let i = 0; i < nodes.length - 1; i++) {
+        const fromEl = document.getElementById(`node-${nodes[i].id}`);
+        const toEl = document.getElementById(`node-${nodes[i+1].id}`);
+        if (!fromEl || !toEl) continue;
+
+        const fromRect = fromEl.getBoundingClientRect();
+        const toRect = toEl.getBoundingClientRect();
+
+        const x1 = fromRect.right - boardRect.left + board.scrollLeft;
+        const y1 = fromRect.top + fromRect.height / 2 - boardRect.top + board.scrollTop;
+        const x2 = toRect.left - boardRect.left + board.scrollLeft;
+        const y2 = toRect.top + toRect.height / 2 - boardRect.top + board.scrollTop;
+
+        let d = '';
+        if (x2 > x1) {
+          const dx = Math.max(30, (x2 - x1) * 0.5);
+          d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+        } else {
+          // Wrapped line
+          d = `M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x1 + 40} ${(y1 + y2)/2}, ${(x1 + x2)/2} ${(y1 + y2)/2} C ${x2 - 40} ${(y1 + y2)/2}, ${x2 - 40} ${y2}, ${x2} ${y2}`;
+        }
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', '#6366f1');
+        path.setAttribute('stroke-width', '2.5');
+        path.setAttribute('class', 'flow-wire');
+        svg.appendChild(path);
+      }
+    }
+
+    function selectNode(id) {
+      selectedNodeId = id;
+      renderCanvas();
+      renderDrawer();
+      updatePipelineBanner(null, `Focused node '${id}' in Property Drawer`);
+    }
+
+    // ==========================================
+    // PROPERTY DRAWER: SCHEMA-DRIVEN CONFIGURATION
+    // ==========================================
+    function renderDrawer() {
+      const node = documentState.nodes.find(n => n.id === selectedNodeId);
+      if (!node) return;
+
+      const titleEl = document.getElementById('drawerTitle');
+      const subEl = document.getElementById('drawerSubtitle');
+      const inId = document.getElementById('inputNodeId');
+      const inTitle = document.getElementById('inputNodeTitle');
+      const inWrites = document.getElementById('inputNodeWrites');
+      const form = document.getElementById('dynamicFormFields');
+
+      if (!titleEl || !form) return;
+
+      titleEl.innerText = node.title;
+      subEl.innerText = `Type: ${node.type}`;
+      inId.value = node.id;
+      inTitle.value = node.title;
+      inWrites.value = (node.writes || []).join(', ');
+
+      form.innerHTML = '';
+
+      // Render schema fields based on ConversaCore Activity Type
+      if (node.type === "SimpleActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Bot Message Content</label>
+            <textarea oninput="onDrawerDataChange('message', this.value)" rows="3" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1.5 text-xs text-[var(--foreground)] focus:outline-none focus:border-indigo-500">${node.data.message || ''}</textarea>
+          </div>
+        `;
+      } else if (node.type === "AdaptiveCardActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Adaptive Card Class</label>
+            <input type="text" oninput="onDrawerDataChange('cardName', this.value)" value="${node.data.cardName || ''}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] font-mono" />
+          </div>
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Model Data Binding Class</label>
+            <input type="text" oninput="onDrawerDataChange('modelName', this.value)" value="${node.data.modelName || ''}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] font-mono" />
+          </div>
+        `;
+      } else if (node.type === "PromptActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Semantic Kernel LLM Prompt</label>
+            <textarea oninput="onDrawerDataChange('prompt', this.value)" rows="3" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1.5 text-xs text-[var(--foreground)]">${node.data.prompt || ''}</textarea>
+          </div>
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Target LLM Model</label>
+            <select onchange="onDrawerDataChange('model', this.value)" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)]">
+              <option value="gpt-4o-mini" ${node.data.model === 'gpt-4o-mini' ? 'selected' : ''}>gpt-4o-mini</option>
+              <option value="gpt-4o" ${node.data.model === 'gpt-4o' ? 'selected' : ''}>gpt-4o</option>
+              <option value="gemini-1.5-flash" ${node.data.model === 'gemini-1.5-flash' ? 'selected' : ''}>gemini-1.5-flash</option>
+              <option value="gemini-1.5-pro" ${node.data.model === 'gemini-1.5-pro' ? 'selected' : ''}>gemini-1.5-pro</option>
+            </select>
+          </div>
+        `;
+      } else if (node.type === "QuickAnswerActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Question Prompt</label>
+            <input type="text" oninput="onDrawerDataChange('question', this.value)" value="${node.data.question || ''}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)]" />
+          </div>
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Button Options (Pipe Separated)</label>
+            <input type="text" oninput="onDrawerDataChange('options', this.value)" value="${node.data.options || ''}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] font-mono" />
+          </div>
+        `;
+      } else if (node.type === "DelayActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Duration (Seconds)</label>
+            <input type="number" min="1" max="60" oninput="onDrawerDataChange('durationSec', this.value)" value="${node.data.durationSec || 2}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] font-mono" />
+          </div>
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Show Typing Indicator</label>
+            <select onchange="onDrawerDataChange('showTyping', this.value)" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)]">
+              <option value="true" ${node.data.showTyping === 'true' ? 'selected' : ''}>Yes (Simulate bot typing)</option>
+              <option value="false" ${node.data.showTyping === 'false' ? 'selected' : ''}>No (Silent pause)</option>
+            </select>
+          </div>
+        `;
+      } else if (node.type === "TriggerTopicActivity") {
+        form.innerHTML = `
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">SubTopic Class Name</label>
+            <input type="text" oninput="onDrawerDataChange('subTopicName', this.value)" value="${node.data.subTopicName || ''}" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)] font-mono" />
+          </div>
+          <div>
+            <label class="font-medium text-[var(--muted-foreground)] block mb-1 text-[11px]">Wait For Completion</label>
+            <select onchange="onDrawerDataChange('waitForCompletion', this.value)" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2.5 py-1 text-xs text-[var(--foreground)]">
+              <option value="true" ${node.data.waitForCompletion === 'true' ? 'selected' : ''}>True (Synchronous subtopic)</option>
+              <option value="false" ${node.data.waitForCompletion === 'false' ? 'selected' : ''}>False (Fire and continue)</option>
+            </select>
+          </div>
+        `;
+      }
+    }
+
+    // Every keystroke in Drawer updates the JSON STRUCT directly!
+    function onDrawerInputChange(field, val) {
+      mutateState("NodeDrawer", () => {
+        const node = documentState.nodes.find(n => n.id === selectedNodeId);
+        if (!node) return;
+        if (field === 'id') node.id = val;
+        if (field === 'title') node.title = val;
+        if (field === 'writes') node.writes = val.split(',').map(s => s.trim()).filter(Boolean);
+      });
+      updatePipelineBanner(null, `⚡ [NodeDrawer ➔ JSON SSOT]: Field '${field}' updated ➔ Canvas & Code triggers fired!`);
+    }
+
+    function onDrawerDataChange(key, val) {
+      mutateState("NodeDrawer", () => {
+        const node = documentState.nodes.find(n => n.id === selectedNodeId);
+        if (!node) return;
+        node.data[key] = val;
+      });
+      updatePipelineBanner(null, `⚡ [NodeDrawer ➔ JSON SSOT]: Parameter '${key}' updated ➔ Canvas & Code triggers fired!`);
+    }
+
+    // ==========================================
+    // CODE TRANSCRIBER TRIGGER (JSON -> C# TopicFlow)
+    // ==========================================
+    function renderTranscribedCode() {
+      const codeEl = document.getElementById('codeDisplay');
+      if (!codeEl) return;
+
+      let csharp = `// Auto-generated from JSON SSOT (v${documentState.version})\n`;
+      csharp += `// Single Source of Truth: DiagramDocument\n`;
+      csharp += `using System;\nusing ConversaCore;\nusing ConversaCore.Activities;\n\n`;
+      csharp += `public partial class ${documentState.topicName} : TopicFlow\n{\n`;
+      csharp += `    public ${documentState.topicName}(\n`;
+      csharp += `        TopicWorkflowContext context,\n`;
+      csharp += `        ILogger<${documentState.topicName}> logger,\n`;
+      csharp += `        IConversationContext conversationContext)\n`;
+      csharp += `        : base(context, logger, conversationContext)\n    {\n`;
+      csharp += `        BuildWorkflow();\n    }\n\n`;
+      csharp += `    private void BuildWorkflow()\n    {\n`;
+
+      documentState.nodes.forEach(n => {
+        if (n.type === "SimpleActivity") {
+          csharp += `        // ${n.title}\n`;
+          csharp += `        Add(new SimpleActivity("${n.id}", "${n.data.message || ''}"));\n\n`;
+        } else if (n.type === "AdaptiveCardActivity") {
+          csharp += `        // ${n.title}\n`;
+          csharp += `        Add(new AdaptiveCardActivity<${n.data.cardName || 'Card'}, ${n.data.modelName || 'Model'}>(\n`;
+          csharp += `            "${n.id}", Context, card => card.Create("")));\n\n`;
+        } else if (n.type === "PromptActivity") {
+          csharp += `        // ${n.title}\n`;
+          csharp += `        Add(new PromptActivity("${n.id}", _kernel, _logger) {\n`;
+          csharp += `            PromptTemplate = "${n.data.prompt || ''}",\n`;
+          csharp += `            ModelId = "${n.data.model || 'gpt-4o-mini'}"\n`;
+          csharp += `        });\n\n`;
+        } else if (n.type === "QuickAnswerActivity") {
+          csharp += `        // ${n.title}\n`;
+          const opts = (n.data.options || '').split('|').map(s => `"${s.trim()}"`).join(', ');
+          csharp += `        Add(new QuickAnswerActivity("${n.id}", "${n.data.question || ''}",\n`;
+          csharp += `            new[] { ${opts} }));\n\n`;
+        } else if (n.type === "DelayActivity") {
+          csharp += `        // ${n.title}\n`;
+          csharp += `        Add(new DelayActivity("${n.id}", TimeSpan.FromSeconds(${n.data.durationSec || 2}), showTyping: ${n.data.showTyping === 'false' ? 'false' : 'true'}));\n\n`;
+        } else if (n.type === "TriggerTopicActivity") {
+          csharp += `        // ${n.title}\n`;
+          csharp += `        Add(new TriggerTopicActivity("${n.id}", typeof(${n.data.subTopicName || 'SubTopic'}), waitForCompletion: ${n.data.waitForCompletion === 'false' ? 'false' : 'true'}));\n\n`;
+        }
+      });
+
+      csharp += `    }\n}`;
+      codeEl.textContent = csharp;
+    }
+
+    function renderJsonView() {
+      const jsonEl = document.getElementById('jsonDisplay');
+      if (jsonEl) {
+        jsonEl.textContent = JSON.stringify(documentState, null, 2);
+      }
+    }
+
+    // Simulate physical deletion in C# Code Editor
+    function simulateCodeDeleteLastActivity() {
+      if (documentState.nodes.length <= 1) {
+        alert("At least one activity should remain in the topic.");
+        return;
+      }
+
+      // Deletion propagates from CodeEditor to JSON SSOT!
+      mutateState("CodeEditor", () => {
+        const removed = documentState.nodes.pop();
+        if (selectedNodeId === removed.id) {
+          selectedNodeId = documentState.nodes[documentState.nodes.length - 1].id;
+        }
+        logTx("RoslynParser", `Detected deletion of statement '${removed.id}' in C#. JSON SSOT updated.`);
+      });
+
+      updatePipelineBanner(null, "✂ Code statement deleted ➔ Removed from JSON SSOT ➔ Canvas redrawn & wires healed!");
+    }
+
+    function resetDemo() {
+      documentState.nodes = [
+        {
+          id: "greet-1",
+          type: "SimpleActivity",
+          title: "Welcome User",
+          category: "Messaging",
+          color: "blue",
+          data: { message: "Hello! Welcome to the Insurance Quote Assistant." },
+          writes: []
+        },
+        {
+          id: "card-form-2",
+          type: "AdaptiveCardActivity",
+          title: "Contact Info Form",
+          category: "Cards",
+          color: "emerald",
+          data: { cardName: "ContactInfoCard", modelName: "ContactInfoModel" },
+          writes: ["LeadContact"]
+        },
+        {
+          id: "ai-decision-3",
+          type: "PromptActivity",
+          title: "Risk Assessment AI",
+          category: "AI",
+          color: "purple",
+          data: { prompt: "Classify lead risk tier based on ContactInfo.", model: "gpt-4o-mini" },
+          writes: ["RiskTier"]
+        }
+      ];
+      selectedNodeId = "greet-1";
+      mutateState("System", () => {});
+      updatePipelineBanner(null, "Flow reset to standard template");
+    }
+
+    // ==========================================
+    // CONVERSACORE.UI CHATBOT (JIT ROSLYN EMIT)
+    // ==========================================
+    function onResetChatbotClick() {
+      const btn = document.getElementById('btnResetChat');
+      const badge = document.getElementById('chatCompiledBadge');
+      const notice = document.getElementById('chatPendingNotice');
+      
+      btn.disabled = true;
+      btn.innerHTML = `<span class="animate-spin inline-block">↻</span> Compiling...`;
+      notice.innerText = `Roslyn compiling TopicFlow in RAM (~35ms)...`;
+      
+      setTimeout(() => {
+        compiledVersion = documentState.version;
+        pendingChanges = false;
+        btn.disabled = false;
+        btn.innerHTML = `<span>↺</span> Reset Chat`;
+        badge.innerText = `v${compiledVersion} Compiled`;
+        badge.className = "text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono";
+        notice.innerText = `Fresh session loaded in AssemblyLoadContext`;
+
+        logTx("RoslynCompiler", `In-memory assembly emitted for v${compiledVersion} loaded into collectible ALC.`);
+
+        resetChatMessages();
+      }, 350);
+    }
+
+    function resetChatMessages() {
+      const chat = document.getElementById('chatMessages');
+      if (!chat) return;
+      chat.innerHTML = '';
+
+      // Walk through compiled topic activities
+      documentState.nodes.forEach(node => {
+        if (node.type === "SimpleActivity") {
+          const msg = document.createElement('div');
+          msg.className = "flex gap-2 items-start";
+          msg.innerHTML = `
+            <div class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] shrink-0">🤖</div>
+            <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl rounded-tl-none p-2.5 shadow-xs max-w-[85%] text-xs">
+              <p>${node.data.message || 'Hello! How can I assist you today?'}</p>
+            </div>
+          `;
+          chat.appendChild(msg);
+        } else if (node.type === "AdaptiveCardActivity") {
+          const cardMsg = document.createElement('div');
+          cardMsg.className = "flex gap-2 items-start";
+          cardMsg.innerHTML = `
+            <div class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] shrink-0">🤖</div>
+            <div class="bg-[var(--card)] border-2 border-indigo-500/30 rounded-xl p-3 shadow-xs max-w-[90%] text-xs flex flex-col gap-2">
+              <div class="flex items-center justify-between pb-1 border-b border-[var(--border)]">
+                <span class="font-semibold text-indigo-400">▣ ${node.title}</span>
+                <span class="text-[9px] text-[var(--muted-foreground)] font-mono">${node.data.cardName}</span>
+              </div>
+              <div class="flex flex-col gap-1.5 pt-1">
+                <label class="text-[10px] text-[var(--muted-foreground)]">Full Name</label>
+                <input type="text" placeholder="Jane Doe" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2 py-1 text-xs" />
+                <label class="text-[10px] text-[var(--muted-foreground)]">Email Address</label>
+                <input type="email" placeholder="jane@example.com" class="w-full bg-[var(--sidebar)] border border-[var(--border)] rounded px-2 py-1 text-xs" />
+                <button onclick="submitDemoCard()" class="mt-1 w-full py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-medium transition cursor-pointer">
+                  Submit Form
+                </button>
+              </div>
+            </div>
+          `;
+          chat.appendChild(cardMsg);
+        } else if (node.type === "QuickAnswerActivity") {
+          const quickMsg = document.createElement('div');
+          quickMsg.className = "flex gap-2 items-start";
+          const rawOpts = (node.data.options || 'Yes|No').split('|');
+          const buttonsHtml = rawOpts.map(opt => `
+            <button onclick="sendQuickAnswer('${opt.trim()}')" class="px-2 py-1 rounded-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 text-[11px] font-medium transition cursor-pointer">
+              ${opt.trim()}
+            </button>
+          `).join('');
+
+          quickMsg.innerHTML = `
+            <div class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] shrink-0">❓</div>
+            <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl rounded-tl-none p-2.5 shadow-xs max-w-[85%] text-xs flex flex-col gap-2">
+              <p class="font-medium">${node.data.question || 'Please make a selection:'}</p>
+              <div class="flex flex-wrap gap-1.5 pt-1">
+                ${buttonsHtml}
+              </div>
+            </div>
+          `;
+          chat.appendChild(quickMsg);
+        } else if (node.type === "DelayActivity") {
+          const delayMsg = document.createElement('div');
+          delayMsg.className = "flex gap-2 items-center text-[10px] text-[var(--muted-foreground)] italic px-2";
+          delayMsg.innerHTML = `<span>⏳ Pacing pause (${node.data.durationSec || 2}s)</span>`;
+          chat.appendChild(delayMsg);
+        } else if (node.type === "PromptActivity") {
+          const aiMsg = document.createElement('div');
+          aiMsg.className = "flex gap-2 items-center text-[10px] text-purple-400 px-2";
+          aiMsg.innerHTML = `<span>🧠 Semantic Kernel: ${node.data.model || 'gpt-4o-mini'} analyzed intent</span>`;
+          chat.appendChild(aiMsg);
+        } else if (node.type === "TriggerTopicActivity") {
+          const subMsg = document.createElement('div');
+          subMsg.className = "flex gap-2 items-center text-[10px] text-indigo-400 px-2";
+          subMsg.innerHTML = `<span>🔀 Subtopic '${node.data.subTopicName || 'SubTopic'}' invoked</span>`;
+          chat.appendChild(subMsg);
+        }
+      });
+
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function sendUserMessage() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+
+      appendUserBubble(text);
+      simulateBotReply(`Processed "${text}" through ${documentState.topicName} (v${compiledVersion}). Context saved!`);
+    }
+
+    function sendQuickAnswer(optionText) {
+      appendUserBubble(optionText);
+      simulateBotReply(`Selected: "${optionText}". Moving to next step in ${documentState.topicName}.`);
+    }
+
+    function appendUserBubble(text) {
+      const chat = document.getElementById('chatMessages');
+      const userMsg = document.createElement('div');
+      userMsg.className = "flex gap-2 items-start justify-end";
+      userMsg.innerHTML = `
+        <div class="bg-indigo-600 text-white rounded-2xl rounded-tr-none p-2.5 shadow-xs max-w-[85%] text-xs">
+          <p>${text}</p>
+        </div>
+      `;
+      chat.appendChild(userMsg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function simulateBotReply(replyText) {
+      const chat = document.getElementById('chatMessages');
+      setTimeout(() => {
+        const botReply = document.createElement('div');
+        botReply.className = "flex gap-2 items-start";
+        botReply.innerHTML = `
+          <div class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] shrink-0">🤖</div>
+          <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl rounded-tl-none p-2.5 shadow-xs max-w-[85%] text-xs">
+            <p>${replyText}</p>
+          </div>
+        `;
+        chat.appendChild(botReply);
+        chat.scrollTop = chat.scrollHeight;
+      }, 350);
+    }
+
+    function submitDemoCard() {
+      const chat = document.getElementById('chatMessages');
+      const botMsg = document.createElement('div');
+      botMsg.className = "flex gap-2 items-start";
+      botMsg.innerHTML = `
+        <div class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[11px] shrink-0">🤖</div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl rounded-tl-none p-2.5 shadow-xs max-w-[85%] text-xs">
+          <p>✓ Card submitted! Data bound to context under <code>LeadContact</code>.</p>
+        </div>
+      `;
+      chat.appendChild(botMsg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // ==========================================
+    // VIEW SWITCHER & TABS
+    // ==========================================
+    function switchView(view) {
+      activeView = view;
+      const canvasCol = document.getElementById('canvasContainer');
+      const inspectorCol = document.getElementById('inspectorContainer');
+      const chatbotCol = document.getElementById('chatbotContainer');
+      const protocolView = document.getElementById('protocolView');
+
+      document.getElementById('btnTabStudio').className = view === 'studio' ? 'px-3 py-1.5 rounded-md bg-[var(--card)] text-[var(--foreground)] shadow-sm font-semibold transition flex items-center gap-1.5' : 'px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition flex items-center gap-1.5';
+      document.getElementById('btnTabCanvas').className = view === 'canvas' ? 'px-3 py-1.5 rounded-md bg-[var(--card)] text-[var(--foreground)] shadow-sm font-semibold transition' : 'px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition';
+      document.getElementById('btnTabChat').className = view === 'chat' ? 'px-3 py-1.5 rounded-md bg-[var(--card)] text-[var(--foreground)] shadow-sm font-semibold transition flex items-center gap-1.5' : 'px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition flex items-center gap-1.5';
+      document.getElementById('btnTabProtocol').className = view === 'protocol' ? 'px-3 py-1.5 rounded-md bg-[var(--card)] text-[var(--foreground)] shadow-sm font-semibold transition' : 'px-3 py-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition';
+
+      if (view === 'studio') {
+        canvasCol.classList.remove('hidden');
+        canvasCol.className = "col-span-12 lg:col-span-6 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm relative";
+        inspectorCol.classList.remove('hidden');
+        inspectorCol.className = "col-span-12 lg:col-span-3 flex flex-col gap-4";
+        chatbotCol.classList.remove('hidden');
+        chatbotCol.className = "col-span-12 lg:col-span-3 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm";
+        protocolView.classList.add('hidden');
+      } else if (view === 'canvas') {
+        canvasCol.classList.remove('hidden');
+        canvasCol.className = "col-span-12 lg:col-span-8 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm relative";
+        inspectorCol.classList.remove('hidden');
+        inspectorCol.className = "col-span-12 lg:col-span-4 flex flex-col gap-4";
+        chatbotCol.classList.add('hidden');
+        protocolView.classList.add('hidden');
+      } else if (view === 'chat') {
+        canvasCol.classList.remove('hidden');
+        canvasCol.className = "col-span-12 lg:col-span-8 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm relative";
+        inspectorCol.classList.add('hidden');
+        chatbotCol.classList.remove('hidden');
+        chatbotCol.className = "col-span-12 lg:col-span-4 flex flex-col bg-[var(--card)] border border-[var(--border)] rounded-xl overflow-hidden shadow-sm";
+        protocolView.classList.add('hidden');
+      } else if (view === 'protocol') {
+        canvasCol.classList.add('hidden');
+        inspectorCol.classList.add('hidden');
+        chatbotCol.classList.add('hidden');
+        protocolView.classList.remove('hidden');
+        protocolView.classList.add('flex');
+      }
+
+      setTimeout(drawWires, 50);
+    }
+
+    function switchInspectorTab(tab) {
+      activeInspectorTab = tab;
+      const codePre = document.getElementById('codeDisplay');
+      const jsonPre = document.getElementById('jsonDisplay');
+      const btnCode = document.getElementById('btnTabCode');
+      const btnJson = document.getElementById('btnTabJson');
+
+      if (tab === 'code') {
+        codePre.classList.remove('hidden');
+        jsonPre.classList.add('hidden');
+        btnCode.className = "px-2 py-0.5 rounded text-[11px] font-semibold text-indigo-400 bg-[var(--sidebar)] shadow-xs";
+        btnJson.className = "px-2 py-0.5 rounded text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]";
+      } else {
+        codePre.classList.add('hidden');
+        jsonPre.classList.remove('hidden');
+        btnJson.className = "px-2 py-0.5 rounded text-[11px] font-semibold text-indigo-400 bg-[var(--sidebar)] shadow-xs";
+        btnCode.className = "px-2 py-0.5 rounded text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]";
+      }
+    }
+
+    // Initial boot
+    renderCanvas();
+    renderDrawer();
+    renderTranscribedCode();
+    renderJsonView();
+    resetChatMessages();
+    switchView('studio');
+    window.addEventListener('resize', drawWires);
+  </script>
+</body>
+</html>

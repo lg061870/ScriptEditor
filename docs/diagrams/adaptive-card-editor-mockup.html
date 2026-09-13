@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Adaptive Card Editor (proposed) — ScriptCore.AI</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #e2e4e9;
+    --border-strong: #d3d6dd;
+    --text: #1c1f26;
+    --text-secondary: #6b7180;
+    --text-muted: #9aa0ac;
+    --accent: #2f6fed;
+    --accent-bg: #eaf1fe;
+    --accent-border: #b9d1fb;
+    --canvas: #eef0f4;
+    --card-bg: #ffffff;
+    --success: #1b9e6b;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+  }
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .breadcrumb {
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .breadcrumb b { color: var(--text); font-weight: 600; }
+  .badge-proposed {
+    font-size: 11px;
+    font-weight: 600;
+    color: #8a5a00;
+    background: #fff2d9;
+    border: 1px solid #f3d999;
+    border-radius: 999px;
+    padding: 2px 9px;
+    letter-spacing: 0.02em;
+  }
+  .spacer { flex: 1; }
+  .card-name {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .btn {
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    color: var(--text);
+    cursor: default;
+  }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn-ghost {
+    border-color: transparent;
+    color: var(--text-secondary);
+  }
+  .body-row {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .panel {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .panel-right {
+    border-right: none;
+    border-left: 1px solid var(--border);
+  }
+  .panel-header {
+    padding: 12px 14px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .search {
+    margin: 0 12px 10px;
+    padding: 7px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 12.5px;
+    background: var(--bg);
+  }
+  .elements-left { width: 208px; overflow-y: auto; }
+  .element-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 14px;
+    cursor: default;
+  }
+  .element-item:hover { background: var(--bg); }
+  .element-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .element-label { font-size: 12.5px; color: var(--text); }
+  .section-label {
+    padding: 12px 14px 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .canvas-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .canvas-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  .tab-group {
+    display: flex;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2px;
+    gap: 2px;
+  }
+  .tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+  }
+  .tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+  .toolbar-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+    background: var(--panel);
+  }
+  .canvas {
+    flex: 1;
+    background: var(--canvas);
+    background-image: radial-gradient(circle, #dcdfe5 1px, transparent 1px);
+    background-size: 16px 16px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 24px;
+    overflow: auto;
+  }
+  .ac-card {
+    width: 340px;
+    background: var(--card-bg);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 20px rgba(20,24,34,0.08);
+    overflow: hidden;
+  }
+  .ac-hero {
+    height: 96px;
+    background: linear-gradient(135deg, #dbe8ff, #eef3fb);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6f8ab8;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    position: relative;
+  }
+  .selected-outline {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    position: relative;
+  }
+  .selected-tag {
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-bottom-right-radius: 6px;
+  }
+  .ac-body { padding: 16px; }
+  .ac-title { font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+  .ac-sub { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
+  .ac-field-label { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); margin: 0 0 4px; }
+  .ac-select {
+    font-size: 12.5px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    background: #fbfbfc;
+  }
+  .ac-actions { display: flex; gap: 8px; padding: 0 16px 16px; }
+  .ac-action-btn {
+    flex: 1;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 9px 0;
+    border-radius: 6px;
+  }
+  .ac-action-primary { background: var(--accent); color: #fff; }
+  .ac-action-secondary { background: #f1f3f7; color: var(--text); }
+  .properties-right { width: 260px; overflow-y: auto; }
+  .prop-group { padding: 4px 14px 14px; border-bottom: 1px solid var(--border); }
+  .prop-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin: 10px 0 5px; }
+  .prop-input {
+    width: 100%;
+    font-size: 12.5px;
+    padding: 7px 9px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text);
+    background: #fbfbfc;
+  }
+  .prop-row { display: flex; gap: 8px; }
+  .prop-row .prop-input { flex: 1; }
+  .swatch-row { display: flex; gap: 6px; margin-top: 4px; }
+  .swatch {
+    width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--border-strong);
+  }
+  .binding-note {
+    margin: 10px 14px;
+    padding: 8px 10px;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: #1c4ea6;
+    line-height: 1.5;
+  }
+  .binding-note code { font-family: ui-monospace, Consolas, monospace; background: rgba(47,111,237,0.12); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div class="breadcrumb">ScriptCore.AI / Script Editor / <b>Card Editor</b></div>
+    <span class="badge-proposed">Proposed &mdash; not yet built</span>
+    <div class="spacer"></div>
+    <div class="card-name">WelcomeCard.json</div>
+    <button class="btn btn-ghost">Preview</button>
+    <button class="btn">JSON view</button>
+    <button class="btn btn-primary">Save to node</button>
+  </div>
+
+  <div class="body-row">
+
+    <div class="panel elements-left">
+      <div class="panel-header">Elements</div>
+      <div class="search">Search elements</div>
+
+      <div class="section-label">Text &amp; media</div>
+      <div class="element-item"><div class="element-icon">T</div><div class="element-label">TextBlock</div></div>
+      <div class="element-item"><div class="element-icon">Im</div><div class="element-label">Image</div></div>
+      <div class="element-item"><div class="element-icon">Md</div><div class="element-label">RichTextBlock</div></div>
+
+      <div class="section-label">Inputs</div>
+      <div class="element-item"><div class="element-icon">Tx</div><div class="element-label">Input.Text</div></div>
+      <div class="element-item"><div class="element-icon">Nb</div><div class="element-label">Input.Number</div></div>
+      <div class="element-item"><div class="element-icon">Cs</div><div class="element-label">Input.ChoiceSet</div></div>
+      <div class="element-item"><div class="element-icon">Tg</div><div class="element-label">Input.Toggle</div></div>
+      <div class="element-item"><div class="element-icon">Dt</div><div class="element-label">Input.Date</div></div>
+
+      <div class="section-label">Layout</div>
+      <div class="element-item"><div class="element-icon">Cn</div><div class="element-label">Container</div></div>
+      <div class="element-item"><div class="element-icon">Cl</div><div class="element-label">ColumnSet</div></div>
+      <div class="element-item"><div class="element-icon">Fs</div><div class="element-label">FactSet</div></div>
+
+      <div class="section-label">Actions</div>
+      <div class="element-item"><div class="element-icon">Sb</div><div class="element-label">Action.Submit</div></div>
+      <div class="element-item"><div class="element-icon">Op</div><div class="element-label">Action.OpenUrl</div></div>
+      <div class="element-item"><div class="element-icon">Sh</div><div class="element-label">Action.ShowCard</div></div>
+    </div>
+
+    <div class="canvas-wrap">
+      <div class="canvas-toolbar">
+        <div class="tab-group">
+          <div class="tab active">Card layout</div>
+          <div class="tab">Data model</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="toolbar-icon-btn">&#8630;</div>
+        <div class="toolbar-icon-btn">&#8631;</div>
+        <div class="toolbar-icon-btn">&#9881;</div>
+      </div>
+      <div class="canvas">
+        <div class="ac-card">
+          <div class="ac-hero">hero image</div>
+          <div class="ac-body">
+            <p class="ac-title">Welcome back</p>
+            <p class="ac-sub">Pick a topic and I&rsquo;ll take it from there.</p>
+            <div class="selected-outline" style="border-radius:6px; margin-bottom: 4px;">
+              <span class="selected-tag">Input.ChoiceSet</span>
+              <p class="ac-field-label" style="padding: 14px 0 0 10px; margin-bottom: 0;">Topic</p>
+              <div class="ac-select" style="margin: 6px 10px 10px;">Choose a topic&hellip;</div>
+            </div>
+          </div>
+          <div class="ac-actions">
+            <div class="ac-action-btn ac-action-secondary">Cancel</div>
+            <div class="ac-action-btn ac-action-primary">Continue</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-right properties-right">
+      <div class="panel-header">Properties &mdash; Input.ChoiceSet</div>
+
+      <div class="prop-group">
+        <div class="prop-label">Id</div>
+        <input class="prop-input" value="topic" readonly />
+        <div class="prop-label">Label</div>
+        <input class="prop-input" value="Topic" readonly />
+        <div class="prop-label">Placeholder</div>
+        <input class="prop-input" value="Choose a topic&hellip;" readonly />
+      </div>
+
+      <div class="prop-group">
+        <div class="prop-label">Choices</div>
+        <input class="prop-input" value="Billing" readonly style="margin-bottom:6px;" />
+        <input class="prop-input" value="Technical support" readonly style="margin-bottom:6px;" />
+        <input class="prop-input" value="Something else" readonly />
+      </div>
+
+      <div class="prop-group">
+        <div class="prop-label">Style</div>
+        <div class="prop-row">
+          <select class="prop-input"><option>Compact</option></select>
+          <select class="prop-input"><option>Single select</option></select>
+        </div>
+        <div class="prop-label">Required</div>
+        <select class="prop-input"><option>Yes</option></select>
+      </div>
+
+      <div class="binding-note">
+        Bound to <code>context.Topic</code>. Value is written to the node&rsquo;s <code>Submission Context Key</code> on submit.
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
