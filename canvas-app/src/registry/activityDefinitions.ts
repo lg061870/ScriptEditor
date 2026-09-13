@@ -627,13 +627,18 @@ const DEFINITIONS: ActivityDefinition[] = [
     getSummary: (data) => data.resetMessage || 'Reset session',
   },
   {
-    type: 'WaitForUserInput',
+    type: 'WaitForUserInputActivity',
     title: 'Wait For User Input',
     category: 'Interaction',
     color: '#f59e0b',
-    // Real class WaitForUserInputActivity extends AdaptiveCardActivity<WaitForUserInputModel>
-    // -- needs TopicWorkflowContext/ILogger, the same generic-fallback gap
-    // as AdaptiveCardActivity itself. prompt/modelContextKey both map to
+    // Catalog previously used the doc heading's shorthand
+    // 'WaitForUserInput' as the literal type string; the real class is
+    // WaitForUserInputActivity (extends AdaptiveCardActivity<WaitForUserInputModel>)
+    // -- same category of bug as PromptAttentionActivity/SemanticResponse,
+    // fixed as part of #38's drift pass. Still needs TopicWorkflowContext/
+    // ILogger, the same generic-fallback gap as AdaptiveCardActivity
+    // itself, so this remains best-effort even with the correct class
+    // name. prompt/modelContextKey both map to
     // real constructor params; `required` is kept for doc-parity (the
     // real class always sets IsRequired = true internally, not
     // configurable via a field).
@@ -687,16 +692,15 @@ const DEFINITIONS: ActivityDefinition[] = [
     getSummary: (data) => data.message || 'Wait for interactive input',
   },
   {
-    type: 'PromptAttentionActivity',
+    type: 'ChatPromptAttentionActivity',
     title: 'Prompt Attention',
     category: 'Interaction',
     color: '#f59e0b',
-    // The real class is named ChatPromptAttentionActivity (not
-    // PromptAttentionActivity) -- a real naming drift between
-    // docs/activity-shapes.md/this catalog and the framework, worth
-    // revisiting in the Phase 5 catalog drift pass (#38). Kept as-is here
-    // since renaming the catalog's own type string is a bigger,
-    // cross-cutting change than this task's scope.
+    // Real class is ChatPromptAttentionActivity -- the catalog previously
+    // used PromptAttentionActivity, which doesn't exist in ConversaCore.
+    // Since BuildGenericFallback uses the type string as the literal C#
+    // class name, that mismatch made this shape uncompilable. Fixed as
+    // part of #38's drift pass.
     defaultData: { message: 'Please answer to continue', durationMs: '3000', eventName: 'PromptAttention' },
     fields: [
       { key: 'message', label: 'Message', kind: 'textarea' },
@@ -796,15 +800,16 @@ const DEFINITIONS: ActivityDefinition[] = [
     getSummary: (data) => data.message || 'Multiple topics matched',
   },
   {
-    type: 'SemanticResponse',
+    type: 'SemanticResponseActivity',
     title: 'Semantic Response',
     category: 'AI',
     color: '#8b5cf6',
-    // The real class is named SemanticResponseActivity (not
-    // SemanticResponse) -- a real naming drift between
-    // docs/activity-shapes.md/this catalog and the framework, same
-    // category as PromptAttentionActivity's (flagged for #38). Real ctor
-    // needs Kernel/ILogger (generic-fallback gap, same as PromptActivity).
+    // Real class is SemanticResponseActivity -- the catalog previously
+    // used SemanticResponse, which doesn't exist in ConversaCore. Since
+    // BuildGenericFallback uses the type string as the literal C# class
+    // name, that mismatch made this shape uncompilable. Fixed as part of
+    // #38's drift pass. Real ctor needs Kernel/ILogger (generic-fallback
+    // gap, same as PromptActivity).
     // collection maps to the real collectionName param; userPromptKey
     // maps to the real UserPromptContextKey property; skipLlmThreshold
     // maps to the real SkipLLMThreshold property.

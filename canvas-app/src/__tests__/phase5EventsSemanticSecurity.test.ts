@@ -4,7 +4,7 @@ import { getActivityDefinition } from '../registry/activityDefinitions';
 /**
  * Phase 5.4's acceptance criteria (#36): EventTriggerActivity, TriggerTopic,
  * ExecuteTopicActivity, CompleteTopicActivity, MultipleTopicsMatchedActivity,
- * SemanticResponse, SemanticQueryActivity, SignInActivity all present with
+ * SemanticResponseActivity, SemanticQueryActivity, SignInActivity all present with
  * parameters/ports matching docs/activity-shapes.md exactly.
  */
 describe('Phase 5.4: Events/Subroutines + Semantic/AI + Security parity', () => {
@@ -15,7 +15,7 @@ describe('Phase 5.4: Events/Subroutines + Semantic/AI + Security parity', () => 
       'ExecuteTopicActivity',
       'CompleteTopicActivity',
       'MultipleTopicsMatchedActivity',
-      'SemanticResponse',
+      'SemanticResponseActivity',
       'SemanticQueryActivity',
       'SignInActivity',
     ];
@@ -58,8 +58,8 @@ describe('Phase 5.4: Events/Subroutines + Semantic/AI + Security parity', () => 
     });
   });
 
-  it('SemanticResponse matches the doc defaults', () => {
-    expect(getActivityDefinition('SemanticResponse')!.defaultData).toEqual({
+  it('SemanticResponseActivity matches the doc defaults', () => {
+    expect(getActivityDefinition('SemanticResponseActivity')!.defaultData).toEqual({
       collection: 'insurance_basics_intel',
       userPromptKey: 'Basics_UserPrompt',
       skipLlmThreshold: '0.9',

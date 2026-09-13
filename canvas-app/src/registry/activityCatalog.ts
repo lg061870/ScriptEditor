@@ -62,13 +62,13 @@ export const ACTIVITY_CATALOG: CatalogEntry[] = [
   { type: 'DumpCtxActivity', category: 'Variables & State' },
   { type: 'ResetActivity', category: 'Variables & State' },
   // I/O
-  { type: 'WaitForUserInput', category: 'I/O' },
+  { type: 'WaitForUserInputActivity', category: 'I/O' },
   { type: 'PromptActivity', category: 'I/O' },
   { type: 'QuickAnswerActivity', category: 'I/O' },
   { type: 'AdaptiveCardActivity', category: 'I/O' },
   { type: 'ShowSuggestionsActivity', category: 'I/O' },
   { type: 'InteractiveActivity', category: 'I/O' },
-  { type: 'PromptAttentionActivity', category: 'I/O' },
+  { type: 'ChatPromptAttentionActivity', category: 'I/O' },
   { type: 'GreetingActivity', category: 'I/O' },
   // Events & Subroutines
   { type: 'EventTriggerActivity', category: 'Events & Subroutines' },
@@ -77,7 +77,7 @@ export const ACTIVITY_CATALOG: CatalogEntry[] = [
   { type: 'CompleteTopicActivity', category: 'Events & Subroutines' },
   { type: 'MultipleTopicsMatchedActivity', category: 'Events & Subroutines' },
   // Semantic/AI
-  { type: 'SemanticResponse', category: 'Semantic/AI' },
+  { type: 'SemanticResponseActivity', category: 'Semantic/AI' },
   { type: 'SemanticQueryActivity', category: 'Semantic/AI' },
   // Security
   { type: 'SignInActivity', category: 'Security' },

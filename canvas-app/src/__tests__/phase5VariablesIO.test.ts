@@ -4,9 +4,9 @@ import { getActivityDefinition } from '../registry/activityDefinitions';
 
 /**
  * Phase 5.3's acceptance criteria (#35): SetVariableActivity,
- * GlobalVariableActivity, DumpCtxActivity, ResetActivity, WaitForUserInput,
+ * GlobalVariableActivity, DumpCtxActivity, ResetActivity, WaitForUserInputActivity,
  * PromptActivity, QuickAnswer, AdaptiveCardActivity,
- * ShowSuggestionsActivity, InteractiveActivity, PromptAttentionActivity,
+ * ShowSuggestionsActivity, InteractiveActivity, ChatPromptAttentionActivity,
  * GreetingActivity all present with parameters/ports matching
  * docs/activity-shapes.md exactly.
  */
@@ -17,13 +17,13 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
       'GlobalVariableActivity',
       'DumpCtxActivity',
       'ResetActivity',
-      'WaitForUserInput',
+      'WaitForUserInputActivity',
       'PromptActivity',
       'QuickAnswerActivity',
       'AdaptiveCardActivity',
       'ShowSuggestionsActivity',
       'InteractiveActivity',
-      'PromptAttentionActivity',
+      'ChatPromptAttentionActivity',
       'GreetingActivity',
     ];
     for (const type of types) {
@@ -59,8 +59,8 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
     expect(getActivityDefinition('ResetActivity')!.defaultData).toEqual({ resetMessage: 'Session reset completed' });
   });
 
-  it('WaitForUserInput matches the doc defaults', () => {
-    expect(getActivityDefinition('WaitForUserInput')!.defaultData).toEqual({
+  it('WaitForUserInputActivity matches the doc defaults', () => {
+    expect(getActivityDefinition('WaitForUserInputActivity')!.defaultData).toEqual({
       prompt: 'Ask your question about insurance basics:',
       modelContextKey: 'wait_for_user_input',
       required: 'true',
@@ -111,8 +111,8 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
     });
   });
 
-  it('PromptAttentionActivity matches the doc defaults', () => {
-    expect(getActivityDefinition('PromptAttentionActivity')!.defaultData).toEqual({
+  it('ChatPromptAttentionActivity matches the doc defaults', () => {
+    expect(getActivityDefinition('ChatPromptAttentionActivity')!.defaultData).toEqual({
       message: 'Please answer to continue',
       durationMs: '3000',
       eventName: 'PromptAttention',
@@ -129,10 +129,10 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
       'GlobalVariableActivity',
       'DumpCtxActivity',
       'ResetActivity',
-      'WaitForUserInput',
+      'WaitForUserInputActivity',
       'ShowSuggestionsActivity',
       'InteractiveActivity',
-      'PromptAttentionActivity',
+      'ChatPromptAttentionActivity',
       'GreetingActivity',
     ]) {
       const node = createDiagramNode(type, { x: 0, y: 0 });
