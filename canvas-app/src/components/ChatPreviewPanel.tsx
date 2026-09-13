@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DiagramDocument } from '../schema/diagram';
 import { advance, type ChatStep } from '../execution/simulateFlow';
+import { compileAndRun, type CompileDiagnostic } from '../api/transcriptionClient';
 
 export interface ChatPreviewPanelProps {
   document: DiagramDocument;
   onClose: () => void;
 }
 
+type CompileStatus =
+  | { kind: 'compiling' }
+  | { kind: 'success'; typeName: string | null }
+  | { kind: 'error'; diagnostics: CompileDiagnostic[] }
+  | { kind: 'network-error'; message: string };
+
 /**
- * Phase 6.1: a preview panel modeled on ConversaCore.UI's own
- * CustomChatWindowV3.razor (`..\InsuranceSemanticV2\ConversaCore.UI\
+ * Phase 6.1/6.2 (#40/#41): a preview panel modeled on ConversaCore.UI's
+ * own CustomChatWindowV3.razor (`..\InsuranceSemanticV2\ConversaCore.UI\
  * Components\`) -- bot/user message bubbles, a per-message quick-reply
  * chip row, a typing indicator during a DelayActivity's pause, and an
  * input row that highlights via a `prompt-attention`-style state while a
@@ -19,13 +26,21 @@ export interface ChatPreviewPanelProps {
  * rather than the real AdaptiveCardRenderer.razor, since there's no real
  * card/model JSON anywhere in this schema yet to render from.
  *
- * Execution itself is client-side simulation (execution/simulateFlow.ts),
- * not a call to a real ConversaCore runtime -- this task's own acceptance
- * criteria allows "a real (or realistically stubbed) execution", and
- * wiring this pane to the Phase 3.4 on-demand compile+load is Phase 6.2's
- * job, not this one's.
+ * Every open/Reset first calls /api/transcribe/run (#41's "on-demand
+ * compile+load" -- a real Roslyn CSharpCompilation.Emit + assembly load
+ * against the actual ConversaCore.dll reference, not a simulation). Only
+ * on a successful compile does it then walk the simulated flow
+ * (execution/simulateFlow.ts) below -- running the stubbed preview
+ * against a diagram that doesn't even compile would misrepresent it as
+ * more real than it is. A failed compile shows the real Roslyn
+ * diagnostics instead. WorkflowCompiler.CompileAndLoad still doesn't
+ * instantiate a running instance (needs a live TopicWorkflowContext/
+ * ILogger this app has no host for) -- see that file's own scope-boundary
+ * comment -- so the chat itself stays the client-side simulation from
+ * #40 even after a successful real compile.
  */
 export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
+  const [compileStatus, setCompileStatus] = useState<CompileStatus>({ kind: 'compiling' });
   const [messages, setMessages] = useState<ChatStep[]>([]);
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<'text' | 'choice' | 'click' | null>(null);
@@ -107,12 +122,33 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
     await playSteps(result.steps, myRun);
   }
 
-  function handleReset() {
+  async function handleReset() {
+    const myRun = ++runIdRef.current;
     clearTimeout(attentionTimerRef.current);
     setMessages([]);
     setSuggestionChips([]);
     setPromptAttention(null);
     setInputValue('');
+    setEnded(false);
+    setDeadEnd(false);
+    setWaiting(null);
+    setCompileStatus({ kind: 'compiling' });
+
+    let result;
+    try {
+      result = await compileAndRun(document);
+    } catch (err) {
+      if (!aliveRef.current || runIdRef.current !== myRun) return;
+      setCompileStatus({ kind: 'network-error', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    if (!aliveRef.current || runIdRef.current !== myRun) return;
+
+    if (!result.success) {
+      setCompileStatus({ kind: 'error', diagnostics: result.diagnostics });
+      return;
+    }
+    setCompileStatus({ kind: 'success', typeName: result.generatedTypeName });
     void runTurn(null);
   }
 
@@ -129,7 +165,7 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
   useEffect(() => {
     if (!autoStartedRef.current) {
       autoStartedRef.current = true;
-      handleReset();
+      void handleReset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -151,7 +187,7 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
     void runTurn(currentNodeId, '');
   }
 
-  const inputEnabled = waiting === 'text' && !playing;
+  const inputEnabled = waiting === 'text' && !playing && compileStatus.kind === 'success';
 
   return (
     <aside
@@ -192,15 +228,26 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
             🤖
           </span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 12 }}>Live Preview</div>
+            <div style={{ fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              Live Preview
+              <CompileBadge status={compileStatus} />
+            </div>
             <div style={{ fontSize: 10, color: '#6b7280' }}>
-              {ended ? 'Conversation ended' : deadEnd ? 'No further connection from here' : 'Simulated execution'}
+              {compileStatus.kind === 'compiling'
+                ? 'Compiling against ConversaCore…'
+                : compileStatus.kind === 'error' || compileStatus.kind === 'network-error'
+                  ? 'Compile failed -- fix the flow and Reset to retry'
+                  : ended
+                    ? 'Conversation ended'
+                    : deadEnd
+                      ? 'No further connection from here'
+                      : 'Simulated execution'}
             </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" onClick={handleReset} title="Reset conversation" style={resetButtonStyle}>
-            ↺ Reset
+          <button type="button" onClick={() => void handleReset()} title="Recompile and reset" style={resetButtonStyle}>
+            ↺ Run
           </button>
           <button type="button" onClick={onClose} aria-label="Close preview" style={closeButtonStyle}>
             ×
@@ -209,6 +256,9 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, background: '#fafafa' }}>
+        {(compileStatus.kind === 'error' || compileStatus.kind === 'network-error') && (
+          <CompileErrorPanel status={compileStatus} />
+        )}
         {messages.map((step, i) => (
           <MessageBubble key={i} step={step} />
         ))}
@@ -288,6 +338,44 @@ export function ChatPreviewPanel({ document, onClose }: ChatPreviewPanelProps) {
   );
 }
 
+function CompileBadge({ status }: { status: CompileStatus }) {
+  if (status.kind === 'compiling') {
+    return <span style={{ ...badgeStyle, background: '#f3f4f6', color: '#6b7280' }}>compiling…</span>;
+  }
+  if (status.kind === 'success') {
+    return (
+      <span style={{ ...badgeStyle, background: '#d1fae5', color: '#047857' }} title={status.typeName ?? undefined}>
+        ✓ compiled
+      </span>
+    );
+  }
+  return <span style={{ ...badgeStyle, background: '#fee2e2', color: '#b91c1c' }}>✕ compile failed</span>;
+}
+
+function CompileErrorPanel({ status }: { status: Extract<CompileStatus, { kind: 'error' | 'network-error' }> }) {
+  return (
+    <div style={{ border: '1px solid #fecaca', background: '#fef2f2', borderRadius: 8, padding: 8 }}>
+      <div style={{ fontWeight: 700, color: '#b91c1c', marginBottom: 4 }}>
+        {status.kind === 'network-error' ? 'Could not reach the transcription API' : 'This flow does not compile'}
+      </div>
+      {status.kind === 'network-error' ? (
+        <div style={{ fontSize: 11, color: '#7f1d1d' }}>{status.message}</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {status.diagnostics
+            .filter((d) => d.severity === 'Error')
+            .map((d, i) => (
+              <li key={i} style={{ fontSize: 11, color: '#7f1d1d' }}>
+                {d.line != null ? `Line ${d.line}: ` : ''}
+                {d.message}
+              </li>
+            ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({ step }: { step: ChatStep }) {
   if (step.kind === 'user') {
     return (
@@ -342,6 +430,14 @@ function Avatar() {
     </span>
   );
 }
+
+const badgeStyle: React.CSSProperties = {
+  fontSize: 9,
+  fontWeight: 600,
+  borderRadius: 999,
+  padding: '1px 6px',
+  fontFamily: 'monospace',
+};
 
 const chipButtonStyle: React.CSSProperties = {
   border: '1px solid #c7d2fe',

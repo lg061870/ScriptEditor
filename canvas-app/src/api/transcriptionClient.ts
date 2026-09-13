@@ -44,6 +44,39 @@ export async function jsonToCSharp(document: DiagramDocument): Promise<string> {
   return data.cSharp;
 }
 
+/** Mirrors ScriptEditor.Transcription.CompileDiagnostic (Phase 3.4). */
+export interface CompileDiagnostic {
+  severity: string;
+  message: string;
+  line: number | null;
+}
+
+/** Mirrors ScriptEditor.Transcription.CompileResult (Phase 3.4). Returned
+ * by /api/transcribe/run, the explicit "Run"/"Reset" action WorkflowCompiler.cs's
+ * own doc comment describes -- real Roslyn CSharpCompilation.Emit + a
+ * collectible AssemblyLoadContext load against the real ConversaCore.dll
+ * reference, not a simulation. Doesn't instantiate a running instance
+ * (needs a live TopicWorkflowContext/ILogger this app doesn't have) --
+ * see WorkflowCompiler.cs's own scope-boundary comment. */
+export interface CompileResult {
+  success: boolean;
+  diagnostics: CompileDiagnostic[];
+  generatedTypeName: string | null;
+  generatedCSharp: string;
+}
+
+export async function compileAndRun(document: DiagramDocument): Promise<CompileResult> {
+  const response = await fetch(`${API_BASE_URL}/api/transcribe/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(document),
+  });
+  if (!response.ok) {
+    throw new Error(`run failed: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function csharpToJson(code: string): Promise<DiagramDocument> {
   const response = await fetch(`${API_BASE_URL}/api/transcribe/csharp-to-json`, {
     method: 'POST',

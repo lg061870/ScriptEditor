@@ -200,7 +200,8 @@ function CanvasApp() {
             <button
               type="button"
               onClick={() => setShowPreview(true)}
-              data-testid="open-preview-button"
+              data-testid="run-workflow-button"
+              title="Compile and run this flow against a live preview"
               style={{
                 position: 'absolute',
                 top: 10,
@@ -216,7 +217,7 @@ function CanvasApp() {
                 boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
               }}
             >
-              ▶ Preview
+              ▶ Run
             </button>
           )}
         </div>

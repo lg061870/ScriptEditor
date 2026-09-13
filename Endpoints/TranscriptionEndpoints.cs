@@ -3,8 +3,12 @@ using ScriptEditor.Transcription;
 
 namespace ScriptEditor.Endpoints;
 
-// Both directions are real: json-to-csharp (Phase 3.1, JsonToCSharpTranscriber)
-// and csharp-to-json (Phase 3.2, CSharpToJsonParser).
+// json-to-csharp (Phase 3.1, JsonToCSharpTranscriber), csharp-to-json
+// (Phase 3.2, CSharpToJsonParser), and run (Phase 6.2, WorkflowCompiler --
+// the "explicit Run/Reset action" WorkflowCompiler.cs's own doc comment
+// already described; #23 built the compile+load mechanism itself but
+// deliberately left wiring an actual endpoint/button to it for this
+// phase, per #23's own acceptance criteria only covering the mechanism).
 
 public sealed record JsonToCSharpResponse(string CSharp);
 
@@ -43,5 +47,12 @@ public static class TranscriptionEndpoints
             }
         })
         .WithName("TranscribeCSharpToJson");
+
+        group.MapPost("/run", (DiagramDocumentV2 document) =>
+        {
+            var result = WorkflowCompiler.CompileAndLoad(document);
+            return Results.Ok(result);
+        })
+        .WithName("TranscribeAndRun");
     }
 }

@@ -106,17 +106,33 @@ public static class WorkflowCompiler
     // CurrentDomain.GetAssemblies() alone silently omits it, verified
     // empirically. `typeof(ConversaCore.TopicFlow.TopicFlow)` forces the
     // load and gives its exact Location regardless of AppDomain state.
+    //
+    // Same problem, same fix, for Microsoft.Extensions.Logging.Abstractions
+    // (ILogger, referenced by the `using Microsoft.Extensions.Logging;` in
+    // the wrapped source): relying on it merely happening to already be
+    // loaded in this AppDomain is fragile, not a real guarantee -- it was
+    // only true by accident of ASP.NET Core's own host startup eagerly
+    // loading it, and broke immediately (CS0246 on ILogger) the first time
+    // this ran under a plain xunit test host instead of the web host
+    // (#41's own WorkflowCompilerTests.cs caught this). Force it the same
+    // explicit way as ConversaCore, rather than depend on incidental
+    // process state that happens to differ between hosts.
     private static List<MetadataReference> GetReferences()
     {
         var loaded = AppDomain.CurrentDomain.GetAssemblies()
             .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
             .ToList();
 
-        var conversaCore = typeof(ConversaCore.TopicFlow.TopicFlow).Assembly;
-        if (loaded.All(a => a.Location != conversaCore.Location))
+        void EnsureLoaded(Assembly assembly)
         {
-            loaded.Add(conversaCore);
+            if (loaded.All(a => a.Location != assembly.Location))
+            {
+                loaded.Add(assembly);
+            }
         }
+
+        EnsureLoaded(typeof(ConversaCore.TopicFlow.TopicFlow).Assembly);
+        EnsureLoaded(typeof(Microsoft.Extensions.Logging.ILogger).Assembly);
 
         return loaded
             .Select(a => (MetadataReference)MetadataReference.CreateFromFile(a.Location))
