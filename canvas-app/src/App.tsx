@@ -13,9 +13,14 @@ import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
-import { createDiagramNode } from './actions/createNode';
+import { createDiagramNode, nextEdgeId } from './actions/createNode';
 import { sampleDocument } from './fixtures/sampleDocument';
 import type { DiagramDocument } from './schema/diagram';
+
+interface PendingConnection {
+  sourceNodeId: string;
+  sourcePortId: string;
+}
 
 const nodeTypes = { diagramNode: DiagramNode };
 
@@ -29,12 +34,21 @@ export default function App() {
 
 function CanvasApp() {
   const [doc, setDoc] = useState<DiagramDocument>(sampleDocument);
+  const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   const { screenToFlowPosition } = useReactFlow();
+
+  // Phase 1.4: clicking "+" on a dangling output port arms this instead of
+  // creating anything directly -- the palette then switches into
+  // click-to-add mode (handlePickForPendingConnection below) so the user
+  // picks what gets wired to that exact port.
+  const onRequestAddNode = useCallback((nodeId: string, portId: string) => {
+    setPendingConnection({ sourceNodeId: nodeId, sourcePortId: portId });
+  }, []);
 
   // Memoized so identity is stable across renders that don't change `doc`
   // -- otherwise React Flow's node-measurement lifecycle sees a "new" node
   // array every render and nodes get stuck at visibility:hidden.
-  const nodes = useMemo(() => toReactFlowNodes(doc), [doc]);
+  const nodes = useMemo(() => toReactFlowNodes(doc, { onRequestAddNode }), [doc, onRequestAddNode]);
   const edges = useMemo(() => toReactFlowEdges(doc), [doc]);
 
   // Position drags flow back into `doc` here -- `nodes` above is always
@@ -93,9 +107,46 @@ function CanvasApp() {
     [screenToFlowPosition],
   );
 
+  const handlePickForPendingConnection = useCallback(
+    (type: string) => {
+      if (!pendingConnection) return;
+
+      setDoc((d) => {
+        const sourceNode = d.nodes.find((n) => n.id === pendingConnection.sourceNodeId);
+        const position = sourceNode ? { x: sourceNode.x + 280, y: sourceNode.y } : { x: 0, y: 0 };
+        const newNode = createDiagramNode(type, position);
+        const targetInputPort = newNode.ports.find((p) => p.direction === 'input');
+
+        const newEdge = {
+          id: nextEdgeId(),
+          from: { node: pendingConnection.sourceNodeId, port: pendingConnection.sourcePortId },
+          ...(targetInputPort
+            ? { to: { node: newNode.id, port: targetInputPort.id } }
+            : {}),
+        };
+
+        return { ...d, nodes: [...d.nodes, newNode], edges: [...d.edges, newEdge] };
+      });
+
+      setPendingConnection(null);
+    },
+    [pendingConnection],
+  );
+
+  const pendingConnectionLabel = useMemo(() => {
+    if (!pendingConnection) return null;
+    const sourceNode = doc.nodes.find((n) => n.id === pendingConnection.sourceNodeId);
+    const port = sourceNode?.ports.find((p) => p.id === pendingConnection.sourcePortId);
+    return `${sourceNode?.name ?? sourceNode?.type ?? pendingConnection.sourceNodeId} → ${port?.name ?? pendingConnection.sourcePortId}`;
+  }, [pendingConnection, doc.nodes]);
+
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh' }}>
-      <Palette />
+      <Palette
+        pendingConnectionLabel={pendingConnectionLabel}
+        onCancelPending={() => setPendingConnection(null)}
+        onPick={handlePickForPendingConnection}
+      />
       <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}

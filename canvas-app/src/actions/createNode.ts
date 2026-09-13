@@ -1,11 +1,17 @@
 import type { DiagramNode, DiagramPort } from '../schema/diagram';
 import { getActivityDefinition } from '../registry/activityDefinitions';
 
-let counter = 0;
+let nodeCounter = 0;
+let edgeCounter = 0;
 
 export function nextNodeId(): string {
-  counter += 1;
-  return `node-${Date.now()}-${counter}`;
+  nodeCounter += 1;
+  return `node-${Date.now()}-${nodeCounter}`;
+}
+
+export function nextEdgeId(): string {
+  edgeCounter += 1;
+  return `edge-${Date.now()}-${edgeCounter}`;
 }
 
 /** Every new node gets one generic Input/Output main-role port pair --

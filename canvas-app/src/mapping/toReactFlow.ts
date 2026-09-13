@@ -9,6 +9,13 @@ export interface DiagramNodeData extends Record<string, unknown> {
    * summary line (Phase 1.2) and the Inspector's field form (Phase 1.5)
    * both read from this. */
   rawData: Record<string, string>;
+  /** Output port ids on this node that already have an outgoing edge --
+   * Phase 1.4's "+" affordance only renders on ports NOT in this set. */
+  connectedOutputPortIds: string[];
+  /** Present only when a "+" click should be possible (App.tsx supplies
+   * this); undefined disables the affordance entirely rather than
+   * rendering a dead button. */
+  onRequestAddNode?: (nodeId: string, portId: string) => void;
 }
 
 const SIDE_TO_POSITION: Record<DiagramPortSide, Position> = {
@@ -22,10 +29,19 @@ export function sideToPosition(side: DiagramPortSide): Position {
   return SIDE_TO_POSITION[side];
 }
 
+export interface ToReactFlowNodesOptions {
+  onRequestAddNode?: (nodeId: string, portId: string) => void;
+}
+
 /** DiagramDocument.nodes -> React Flow nodes. Each DiagramPort is passed
  * through as-is (component decides Handle type/position from it) rather
  * than pre-flattened, so the mapping stays a straight structural copy. */
-export function toReactFlowNodes(document: DiagramDocument): Node<DiagramNodeData>[] {
+export function toReactFlowNodes(
+  document: DiagramDocument,
+  options: ToReactFlowNodesOptions = {},
+): Node<DiagramNodeData>[] {
+  const connectedSourcePorts = new Set(document.edges.map((edge) => edge.from.port));
+
   return document.nodes.map((node) => ({
     id: node.id,
     type: 'diagramNode',
@@ -35,6 +51,10 @@ export function toReactFlowNodes(document: DiagramDocument): Node<DiagramNodeDat
       type: node.type,
       ports: node.ports,
       rawData: node.data,
+      connectedOutputPortIds: node.ports
+        .filter((port) => port.direction === 'output' && connectedSourcePorts.has(port.id))
+        .map((port) => port.id),
+      onRequestAddNode: options.onRequestAddNode,
     },
   }));
 }

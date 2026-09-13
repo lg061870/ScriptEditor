@@ -7,15 +7,20 @@ export type DiagramNodeType = Node<DiagramNodeData>;
 /** Collapsed n8n-style node (Phase 1.2): icon + title + one summary line
  * only -- no inline parameter fields. Full field editing is the Inspector
  * side panel (Phase 1.5), opened by selecting this node. */
-export function DiagramNode({ data, selected }: NodeProps<DiagramNodeType>) {
+export function DiagramNode({ id, data, selected }: NodeProps<DiagramNodeType>) {
   const definition = getActivityDefinition(data.type);
   const title = definition?.title ?? data.label;
   const summary = getNodeSummary(data.type, data.rawData);
   const color = definition?.color ?? '#6b7280';
+  const connected = new Set(data.connectedOutputPortIds);
+  const danglingOutputPorts = data.ports.filter(
+    (port) => port.direction === 'output' && !connected.has(port.id),
+  );
 
   return (
     <div
       style={{
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
@@ -36,6 +41,41 @@ export function DiagramNode({ data, selected }: NodeProps<DiagramNodeType>) {
           position={sideToPosition(port.position)}
         />
       ))}
+      {/* Phase 1.4: "+" on every unconnected output port -- opens the
+          palette in "connecting from" mode; picking an activity creates
+          it pre-wired to this exact port. Stacked by index for the (not
+          yet common) case of more than one dangling output port. */}
+      {data.onRequestAddNode &&
+        danglingOutputPorts.map((port, index) => (
+          <button
+            key={port.id}
+            type="button"
+            title={`Add node from ${port.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              data.onRequestAddNode!(id, port.id);
+            }}
+            style={{
+              position: 'absolute',
+              right: -14,
+              top: '50%',
+              transform: `translate(0, calc(-50% + ${index * 24}px))`,
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              border: `1px solid ${color}`,
+              background: '#fff',
+              color,
+              fontSize: 12,
+              lineHeight: '16px',
+              padding: 0,
+              cursor: 'pointer',
+              zIndex: 1,
+            }}
+          >
+            +
+          </button>
+        ))}
       <div
         aria-hidden
         style={{
