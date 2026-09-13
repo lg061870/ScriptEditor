@@ -25,3 +25,7 @@ obj/
 # Spike demo apps (throwaway, Phase 0.1)
 spike/*/node_modules
 spike/*/dist
+
+# canvas-app (standalone frontend)
+canvas-app/node_modules
+canvas-app/dist
