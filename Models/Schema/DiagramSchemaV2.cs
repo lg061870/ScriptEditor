@@ -25,15 +25,22 @@ namespace ScriptEditor.Models.Schema;
 [JsonConverter(typeof(JsonStringEnumConverter<DiagramPortRoleV2>))]
 public enum DiagramPortRoleV2
 {
+    [JsonStringEnumMemberName("main")]
     Main,
+    [JsonStringEnumMemberName("exception")]
     Exception,
+    [JsonStringEnumMemberName("control")]
     Control,
+    [JsonStringEnumMemberName("aux-config")]
     AuxConfig
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<DiagramPortDirectionV2>))]
 public enum DiagramPortDirectionV2
 {
+    [JsonStringEnumMemberName("input")]
     Input,
+    [JsonStringEnumMemberName("output")]
     Output
 }
 
@@ -42,11 +49,16 @@ public enum DiagramPortDirectionV2
 /// index/count, so this is not a pixel offset, just which edge of the node
 /// the port belongs on.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<DiagramPortSideV2>))]
 public enum DiagramPortSideV2
 {
+    [JsonStringEnumMemberName("left")]
     Left,
+    [JsonStringEnumMemberName("right")]
     Right,
+    [JsonStringEnumMemberName("top")]
     Top,
+    [JsonStringEnumMemberName("bottom")]
     Bottom
 }
 

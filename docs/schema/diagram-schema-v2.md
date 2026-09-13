@@ -90,9 +90,23 @@ require a schema change, only a new port instance with `role: aux-config`.
 cases — this is exactly gap #4 in `docs/n8n-feature-gap-analysis.md`, fixed
 structurally by v2 + Phase 4.4's population logic, not by this doc alone.)
 
-## Not yet verified
+## Verification
 
-This session had no .NET SDK available (sandboxed network policy blocks the
-SDK download), so `Models/Schema/DiagramSchemaV2.cs` has **not been compiled**.
-The TypeScript half (`canvas-app/src/schema/diagram.ts`) type-checks cleanly
-(`npx tsc --noEmit`). Run `dotnet build` on the C# file before relying on it.
+Both halves are now confirmed, not just drafted:
+
+- `canvas-app/src/schema/diagram.ts` type-checks cleanly (`npx tsc --noEmit`).
+- `Models/Schema/DiagramSchemaV2.cs` compiles (`dotnet build`, 0 errors) and
+  was exercised live through the Phase 0.5 stub API
+  (`docs/api/transcription-api.md`).
+
+One real bug was caught by that live test and is already fixed: the first
+version used `[JsonConverter(typeof(JsonStringEnumConverter<T>))]` with no
+naming policy, which serializes enum members in their C# PascalCase spelling
+(`"role":"Main"`, `"direction":"Input"`, `"position":"Left"`) — not the
+lowercase/kebab-case values this doc and the TS types declare
+(`"main"`, `"input"`, `"left"`, and critically `"aux-config"`, which no
+built-in naming policy produces from `AuxConfig`). Fixed by adding
+`[JsonStringEnumMemberName("...")]` (new in .NET 9) to every enum member,
+pinning the exact wire string. Re-verified via a live curl round-trip — see
+`docs/api/transcription-api.md` for the actual (not hypothetical) response
+body.
