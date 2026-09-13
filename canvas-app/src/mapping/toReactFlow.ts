@@ -33,11 +33,13 @@ export interface ToReactFlowNodesOptions {
   onRequestAddNode?: (nodeId: string, portId: string) => void;
   /** When `nodes` is a fully-controlled prop (never React Flow's own
    * internal state), selection must round-trip through it too: React Flow
-   * marks a node selected internally on click and fires onSelectionChange,
-   * but the very next render hands it back a `nodes` array with no
+   * marks node(s) selected internally on click/marquee-drag and fires a
+   * change, but the very next render hands it back a `nodes` array with no
    * `selected` field, which it treats as authoritative and reverts the
-   * click. Passing the current selection back in here closes that loop. */
-  selectedNodeId?: string | null;
+   * selection. Passing the current selection set back in here closes that
+   * loop; a Set (not a single id) so marquee multi-select (Phase 1.6) can
+   * mark more than one node selected at once. */
+  selectedNodeIds?: ReadonlySet<string>;
 }
 
 /** DiagramDocument.nodes -> React Flow nodes. Each DiagramPort is passed
@@ -53,7 +55,7 @@ export function toReactFlowNodes(
     id: node.id,
     type: 'diagramNode',
     position: { x: node.x, y: node.y },
-    selected: node.id === options.selectedNodeId,
+    selected: options.selectedNodeIds?.has(node.id) ?? false,
     data: {
       label: node.name ?? node.type,
       type: node.type,

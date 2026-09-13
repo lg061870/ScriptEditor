@@ -36,7 +36,7 @@ export default function App() {
 function CanvasApp() {
   const [doc, setDoc] = useState<DiagramDocument>(sampleDocument);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(new Set());
   const { screenToFlowPosition } = useReactFlow();
 
   const onUpdateNodeData = useCallback((nodeId: string, key: string, value: string) => {
@@ -58,8 +58,8 @@ function CanvasApp() {
   // -- otherwise React Flow's node-measurement lifecycle sees a "new" node
   // array every render and nodes get stuck at visibility:hidden.
   const nodes = useMemo(
-    () => toReactFlowNodes(doc, { onRequestAddNode, selectedNodeId }),
-    [doc, onRequestAddNode, selectedNodeId],
+    () => toReactFlowNodes(doc, { onRequestAddNode, selectedNodeIds }),
+    [doc, onRequestAddNode, selectedNodeIds],
   );
   const edges = useMemo(() => toReactFlowEdges(doc), [doc]);
 
@@ -88,21 +88,52 @@ function CanvasApp() {
       });
     }
 
-    // Selection drives the Inspector panel (Phase 1.5). This is the only
-    // reliable place it arrives: React Flow's dedicated onSelectionChange
-    // prop does NOT fire for a plain single-node click in this version --
-    // only onNodesChange receives the `select` change (confirmed by
-    // instrumenting both during development). A click batch can carry
-    // both a deselect for the previous node and a select for the new one
-    // in either order, so find the one with `selected: true` rather than
-    // just taking the first 'select' change; none found means the click
-    // deselected everything (e.g. clicked empty canvas) -> close the panel.
+    // Selection drives the Inspector panel (Phase 1.5) and marquee
+    // multi-select (Phase 1.6). This is the only reliable place it
+    // arrives: React Flow's dedicated onSelectionChange prop does NOT
+    // fire for a plain single-node click in this version -- only
+    // onNodesChange receives `select` changes (confirmed by instrumenting
+    // both during development). A batch can carry any mix of deselects
+    // and selects (a plain click deselects the old node and selects the
+    // new one; a marquee drag selects several at once with no deselects
+    // if nothing was selected before) -- so this merges each change into
+    // the existing selection set rather than assuming a single winner.
     const selectChanges = changes.filter(
       (change): change is Extract<typeof change, { type: 'select' }> => change.type === 'select',
     );
     if (selectChanges.length > 0) {
-      const newlySelected = selectChanges.find((change) => change.selected);
-      setSelectedNodeId(newlySelected ? newlySelected.id : null);
+      setSelectedNodeIds((current) => {
+        const next = new Set(current);
+        for (const change of selectChanges) {
+          if (change.selected) next.add(change.id);
+          else next.delete(change.id);
+        }
+        return next;
+      });
+    }
+
+    // Phase 1.6: Delete/Backspace on selected node(s) fires `remove`
+    // changes here. React Flow also fires matching `remove` changes for
+    // any edges connected to a deleted node through onEdgesChange
+    // (handled below) -- but a node is stripped of its own edges here too
+    // as a belt-and-suspenders guard, since a stray edge referencing a
+    // node id that no longer exists would otherwise be silently dropped
+    // by toReactFlowEdges on the next render anyway, just less explicitly.
+    const removeChanges = changes.filter(
+      (change): change is Extract<typeof change, { type: 'remove' }> => change.type === 'remove',
+    );
+    if (removeChanges.length > 0) {
+      const removeIds = new Set(removeChanges.map((change) => change.id));
+      setDoc((d) => ({
+        ...d,
+        nodes: d.nodes.filter((n) => !removeIds.has(n.id)),
+        edges: d.edges.filter((e) => !removeIds.has(e.from.node) && !removeIds.has(e.to?.node ?? '')),
+      }));
+      setSelectedNodeIds((current) => {
+        const next = new Set(current);
+        for (const id of removeIds) next.delete(id);
+        return next;
+      });
     }
   }, []);
 
@@ -169,7 +200,11 @@ function CanvasApp() {
     return `${sourceNode?.name ?? sourceNode?.type ?? pendingConnection.sourceNodeId} → ${port?.name ?? pendingConnection.sourcePortId}`;
   }, [pendingConnection, doc.nodes]);
 
-  const selectedNode = selectedNodeId ? (doc.nodes.find((n) => n.id === selectedNodeId) ?? null) : null;
+  // Inspector only makes sense for exactly one selected node (matching
+  // typical n8n/canvas-editor behavior) -- with a multi-selection it stays
+  // closed rather than picking an arbitrary one to show.
+  const selectedNode =
+    selectedNodeIds.size === 1 ? (doc.nodes.find((n) => selectedNodeIds.has(n.id)) ?? null) : null;
 
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh' }}>
@@ -185,6 +220,7 @@ function CanvasApp() {
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          deleteKeyCode={['Backspace', 'Delete']}
           fitView
         >
           <Background />
@@ -193,7 +229,7 @@ function CanvasApp() {
         </ReactFlow>
       </div>
       {selectedNode && (
-        <Inspector node={selectedNode} onUpdateData={onUpdateNodeData} onClose={() => setSelectedNodeId(null)} />
+        <Inspector node={selectedNode} onUpdateData={onUpdateNodeData} onClose={() => setSelectedNodeIds(new Set())} />
       )}
     </div>
   );
