@@ -14,6 +14,10 @@
     <Compile Remove="Activities\Base\**\*.cs" />
     <Compile Include="Activities\Base\Interfaces\ITopicTriggeredActivity.cs" />
     <Compile Include="Activities\Base\Interfaces\ICustomEventTriggeredActivity.cs" />
+    <!-- ScriptEditor.Tests is a separate project nested under this folder;
+         without this, the default SDK-style **/*.cs glob pulls its files
+         (and xunit-dependent code) into this project's own compilation. -->
+    <Compile Remove="ScriptEditor.Tests\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
