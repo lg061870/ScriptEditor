@@ -1,7 +1,7 @@
 import { Handle, type NodeProps, type Node } from '@xyflow/react';
 import { sideToPosition, type DiagramNodeData } from '../mapping/toReactFlow';
 import { getActivityDefinition, getNodeSummary } from '../registry/activityDefinitions';
-import { portHandleStyle } from '../rendering/portStyle';
+import { portHandleStyle, portStackOffsetStyle, computePortStackPositions } from '../rendering/portStyle';
 
 export type DiagramNodeType = Node<DiagramNodeData>;
 
@@ -17,6 +17,9 @@ export function DiagramNode({ id, data, selected }: NodeProps<DiagramNodeType>) 
   const danglingOutputPorts = data.ports.filter(
     (port) => port.direction === 'output' && !connected.has(port.id),
   );
+  // Phase 4.3: same-side ports are auto-spaced by index/count, not a
+  // hand-set offset -- stackPositions[i] corresponds to data.ports[i].
+  const stackPositions = computePortStackPositions(data.ports);
 
   return (
     <div
@@ -34,51 +37,62 @@ export function DiagramNode({ id, data, selected }: NodeProps<DiagramNodeType>) 
         boxShadow: selected ? `0 0 0 2px ${color}33` : '0 1px 2px rgba(0,0,0,0.05)',
       }}
     >
-      {data.ports.map((port) => (
-        <Handle
-          key={port.id}
-          id={port.id}
-          type={port.direction === 'input' ? 'target' : 'source'}
-          position={sideToPosition(port.position)}
-          title={`${port.name} (${port.role})`}
-          style={portHandleStyle(port.role)}
-        />
-      ))}
+      {data.ports.map((port, index) => {
+        const { index: sideIndex, count: sideCount } = stackPositions[index];
+        return (
+          <Handle
+            key={port.id}
+            id={port.id}
+            type={port.direction === 'input' ? 'target' : 'source'}
+            position={sideToPosition(port.position)}
+            title={`${port.name} (${port.role})`}
+            style={{ ...portHandleStyle(port.role), ...portStackOffsetStyle(port.position, sideIndex, sideCount) }}
+          />
+        );
+      })}
       {/* Phase 1.4: "+" on every unconnected output port -- opens the
           palette in "connecting from" mode; picking an activity creates
-          it pre-wired to this exact port. Stacked by index for the (not
-          yet common) case of more than one dangling output port. */}
+          it pre-wired to this exact port. Phase 4.3: aligned to the same
+          computed side position as the port's own Handle above (not a
+          separate hand-set index*24px stack) so it sits on top of its
+          actual port rather than drifting from it once a side has more
+          than one port. */}
       {data.onRequestAddNode &&
-        danglingOutputPorts.map((port, index) => (
-          <button
-            key={port.id}
-            type="button"
-            title={`Add node from ${port.name}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              data.onRequestAddNode!(id, port.id);
-            }}
-            style={{
-              position: 'absolute',
-              right: -14,
-              top: '50%',
-              transform: `translate(0, calc(-50% + ${index * 24}px))`,
-              width: 18,
-              height: 18,
-              borderRadius: '50%',
-              border: `1px solid ${color}`,
-              background: '#fff',
-              color,
-              fontSize: 12,
-              lineHeight: '16px',
-              padding: 0,
-              cursor: 'pointer',
-              zIndex: 1,
-            }}
-          >
-            +
-          </button>
-        ))}
+        danglingOutputPorts.map((port) => {
+          const portIndex = data.ports.findIndex((p) => p.id === port.id);
+          const { index: sideIndex, count: sideCount } = stackPositions[portIndex];
+          const top = portStackOffsetStyle(port.position, sideIndex, sideCount).top ?? '50%';
+          return (
+            <button
+              key={port.id}
+              type="button"
+              title={`Add node from ${port.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onRequestAddNode!(id, port.id);
+              }}
+              style={{
+                position: 'absolute',
+                right: -14,
+                top,
+                transform: 'translateY(-50%)',
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                border: `1px solid ${color}`,
+                background: '#fff',
+                color,
+                fontSize: 12,
+                lineHeight: '16px',
+                padding: 0,
+                cursor: 'pointer',
+                zIndex: 1,
+              }}
+            >
+              +
+            </button>
+          );
+        })}
       <div
         aria-hidden
         style={{
