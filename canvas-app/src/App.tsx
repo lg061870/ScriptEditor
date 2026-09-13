@@ -1,27 +1,11 @@
-import { useCallback, useMemo, useState, type DragEvent } from 'react';
-import {
-  ReactFlow,
-  ReactFlowProvider,
-  Background,
-  Controls,
-  MiniMap,
-  useReactFlow,
-  type OnNodesChange,
-  type OnEdgesChange,
-} from '@xyflow/react';
+import { useCallback, useMemo, type DragEvent } from 'react';
+import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, useReactFlow, type OnNodesChange, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { Inspector } from './components/Inspector';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
-import { createDiagramNode, nextEdgeId } from './actions/createNode';
-import { sampleDocument } from './fixtures/sampleDocument';
-import type { DiagramDocument } from './schema/diagram';
-
-interface PendingConnection {
-  sourceNodeId: string;
-  sourcePortId: string;
-}
+import { useDiagramStore } from './store/diagramStore';
 
 const nodeTypes = { diagramNode: DiagramNode };
 
@@ -34,16 +18,18 @@ export default function App() {
 }
 
 function CanvasApp() {
-  const [doc, setDoc] = useState<DiagramDocument>(sampleDocument);
-  const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
-  const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(new Set());
+  // Phase 2.2: the only state this component reads is the store -- there
+  // is no local useState<DiagramDocument> anymore. `nodes`/`edges` below
+  // are a pure derivation of `document`; every mutation (drag, delete,
+  // palette drop, "+", Inspector edit) calls a store action directly via
+  // useDiagramStore.getState(), never a local setter.
+  const document = useDiagramStore((s) => s.document);
+  const selectedNodeIds = useDiagramStore((s) => s.selectedNodeIds);
+  const pendingConnection = useDiagramStore((s) => s.pendingConnection);
   const { screenToFlowPosition } = useReactFlow();
 
   const onUpdateNodeData = useCallback((nodeId: string, key: string, value: string) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, [key]: value } } : n)),
-    }));
+    useDiagramStore.getState().updateNodeData(nodeId, key, value, 'Inspector');
   }, []);
 
   // Phase 1.4: clicking "+" on a dangling output port arms this instead of
@@ -51,89 +37,68 @@ function CanvasApp() {
   // click-to-add mode (handlePickForPendingConnection below) so the user
   // picks what gets wired to that exact port.
   const onRequestAddNode = useCallback((nodeId: string, portId: string) => {
-    setPendingConnection({ sourceNodeId: nodeId, sourcePortId: portId });
+    useDiagramStore.getState().setPendingConnection({ sourceNodeId: nodeId, sourcePortId: portId });
   }, []);
 
-  // Memoized so identity is stable across renders that don't change `doc`
-  // -- otherwise React Flow's node-measurement lifecycle sees a "new" node
-  // array every render and nodes get stuck at visibility:hidden.
+  // Memoized so identity is stable across renders that don't change
+  // `document` -- otherwise React Flow's node-measurement lifecycle sees a
+  // "new" node array every render and nodes get stuck at visibility:hidden.
   const nodes = useMemo(
-    () => toReactFlowNodes(doc, { onRequestAddNode, selectedNodeIds }),
-    [doc, onRequestAddNode, selectedNodeIds],
+    () => toReactFlowNodes(document, { onRequestAddNode, selectedNodeIds }),
+    [document, onRequestAddNode, selectedNodeIds],
   );
-  const edges = useMemo(() => toReactFlowEdges(doc), [doc]);
+  const edges = useMemo(() => toReactFlowEdges(document), [document]);
 
-  // Position drags flow back into `doc` here -- `nodes` above is always
-  // freshly derived from `doc`, so without this the canvas would be
-  // non-interactive. Critically, this only reacts to `position` changes:
-  // React Flow also fires `dimensions` (its own measurement pass) and
-  // `select` changes through this same callback, and those are transient
-  // rendering/UI facts, not part of the JSON SSOT. Writing them into `doc`
-  // unconditionally would create a new `doc` reference every measurement
-  // tick -> new memoized `nodes` -> re-measure -> onNodesChange again ->
-  // infinite loop (this is exactly what caused nodes to get stuck at
-  // visibility:hidden with a runaway ResizeObserver loop before this fix).
+  // Position drags, selection, and delete all flow back into the store
+  // here -- `nodes` above is always freshly derived from the store, so
+  // without this the canvas would be non-interactive. Critically, this
+  // only reacts to `position`, `select`, and `remove` changes: React Flow
+  // also fires `dimensions` (its own measurement pass) through this same
+  // callback, and that's a transient rendering fact, not part of the JSON
+  // SSOT. Writing it into the store unconditionally would create a new
+  // `document` reference every measurement tick -> new memoized `nodes` ->
+  // re-measure -> onNodesChange again -> infinite loop (this is exactly
+  // what caused nodes to get stuck at visibility:hidden with a runaway
+  // ResizeObserver loop during Phase 1.3 development).
   const onNodesChange: OnNodesChange = useCallback((changes) => {
+    const store = useDiagramStore.getState();
+
     const positionChanges = changes.filter(
       (change): change is Extract<typeof change, { type: 'position' }> =>
         change.type === 'position' && change.position !== undefined,
     );
-    if (positionChanges.length > 0) {
-      setDoc((d) => {
-        const byId = new Map(positionChanges.map((c) => [c.id, c.position!]));
-        return {
-          ...d,
-          nodes: d.nodes.map((n) => (byId.has(n.id) ? { ...n, x: byId.get(n.id)!.x, y: byId.get(n.id)!.y } : n)),
-        };
-      });
+    for (const change of positionChanges) {
+      store.moveNode(change.id, change.position!, 'Canvas');
     }
 
-    // Selection drives the Inspector panel (Phase 1.5) and marquee
-    // multi-select (Phase 1.6). This is the only reliable place it
-    // arrives: React Flow's dedicated onSelectionChange prop does NOT
-    // fire for a plain single-node click in this version -- only
-    // onNodesChange receives `select` changes (confirmed by instrumenting
-    // both during development). A batch can carry any mix of deselects
-    // and selects (a plain click deselects the old node and selects the
-    // new one; a marquee drag selects several at once with no deselects
-    // if nothing was selected before) -- so this merges each change into
-    // the existing selection set rather than assuming a single winner.
+    // A click batch can carry both a deselect for the previous node and a
+    // select for the new one (in either order), and a marquee drag can
+    // carry several selects at once with no deselects -- so merge every
+    // change into the existing selection set rather than assuming a
+    // single winner. React Flow's dedicated onSelectionChange prop does
+    // NOT fire for a plain single-node click in this version (confirmed
+    // during Phase 1.5 development); only onNodesChange's `select`
+    // changes arrive reliably.
     const selectChanges = changes.filter(
       (change): change is Extract<typeof change, { type: 'select' }> => change.type === 'select',
     );
     if (selectChanges.length > 0) {
-      setSelectedNodeIds((current) => {
-        const next = new Set(current);
-        for (const change of selectChanges) {
-          if (change.selected) next.add(change.id);
-          else next.delete(change.id);
-        }
-        return next;
-      });
+      const next = new Set(store.selectedNodeIds);
+      for (const change of selectChanges) {
+        if (change.selected) next.add(change.id);
+        else next.delete(change.id);
+      }
+      store.setSelection(next);
     }
 
-    // Phase 1.6: Delete/Backspace on selected node(s) fires `remove`
-    // changes here. React Flow also fires matching `remove` changes for
-    // any edges connected to a deleted node through onEdgesChange
-    // (handled below) -- but a node is stripped of its own edges here too
-    // as a belt-and-suspenders guard, since a stray edge referencing a
-    // node id that no longer exists would otherwise be silently dropped
-    // by toReactFlowEdges on the next render anyway, just less explicitly.
     const removeChanges = changes.filter(
       (change): change is Extract<typeof change, { type: 'remove' }> => change.type === 'remove',
     );
     if (removeChanges.length > 0) {
-      const removeIds = new Set(removeChanges.map((change) => change.id));
-      setDoc((d) => ({
-        ...d,
-        nodes: d.nodes.filter((n) => !removeIds.has(n.id)),
-        edges: d.edges.filter((e) => !removeIds.has(e.from.node) && !removeIds.has(e.to?.node ?? '')),
-      }));
-      setSelectedNodeIds((current) => {
-        const next = new Set(current);
-        for (const id of removeIds) next.delete(id);
-        return next;
-      });
+      store.removeNodes(
+        removeChanges.map((c) => c.id),
+        'Canvas',
+      );
     }
   }, []);
 
@@ -142,11 +107,10 @@ function CanvasApp() {
       (change): change is Extract<typeof change, { type: 'remove' }> => change.type === 'remove',
     );
     if (removeChanges.length === 0) return;
-
-    setDoc((d) => {
-      const removeIds = new Set(removeChanges.map((c) => c.id));
-      return { ...d, edges: d.edges.filter((e) => !removeIds.has(e.id)) };
-    });
+    useDiagramStore.getState().removeEdges(
+      removeChanges.map((c) => c.id),
+      'Canvas',
+    );
   }, []);
 
   const onDragOver = useCallback((event: DragEvent) => {
@@ -161,56 +125,54 @@ function CanvasApp() {
       if (!type) return;
 
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      const newNode = createDiagramNode(type, position);
-      setDoc((d) => ({ ...d, nodes: [...d.nodes, newNode] }));
+      useDiagramStore.getState().addNode(type, position, 'Canvas');
     },
     [screenToFlowPosition],
   );
 
   const handlePickForPendingConnection = useCallback(
     (type: string) => {
-      if (!pendingConnection) return;
+      const store = useDiagramStore.getState();
+      if (!store.pendingConnection) return;
+      const { sourceNodeId, sourcePortId } = store.pendingConnection;
 
-      setDoc((d) => {
-        const sourceNode = d.nodes.find((n) => n.id === pendingConnection.sourceNodeId);
-        const position = sourceNode ? { x: sourceNode.x + 280, y: sourceNode.y } : { x: 0, y: 0 };
-        const newNode = createDiagramNode(type, position);
-        const targetInputPort = newNode.ports.find((p) => p.direction === 'input');
+      const sourceNode = store.document.nodes.find((n) => n.id === sourceNodeId);
+      const position = sourceNode ? { x: sourceNode.x + 280, y: sourceNode.y } : { x: 0, y: 0 };
+      const newNodeId = store.addNode(type, position, 'Canvas');
+      const newNode = useDiagramStore.getState().document.nodes.find((n) => n.id === newNodeId)!;
+      const targetInputPort = newNode.ports.find((p) => p.direction === 'input');
 
-        const newEdge = {
-          id: nextEdgeId(),
-          from: { node: pendingConnection.sourceNodeId, port: pendingConnection.sourcePortId },
-          ...(targetInputPort
-            ? { to: { node: newNode.id, port: targetInputPort.id } }
-            : {}),
-        };
+      if (targetInputPort) {
+        store.connectEdge(
+          { node: sourceNodeId, port: sourcePortId },
+          { node: newNodeId, port: targetInputPort.id },
+          'Canvas',
+        );
+      }
 
-        return { ...d, nodes: [...d.nodes, newNode], edges: [...d.edges, newEdge] };
-      });
-
-      setPendingConnection(null);
+      store.setPendingConnection(null);
     },
-    [pendingConnection],
+    [],
   );
 
   const pendingConnectionLabel = useMemo(() => {
     if (!pendingConnection) return null;
-    const sourceNode = doc.nodes.find((n) => n.id === pendingConnection.sourceNodeId);
+    const sourceNode = document.nodes.find((n) => n.id === pendingConnection.sourceNodeId);
     const port = sourceNode?.ports.find((p) => p.id === pendingConnection.sourcePortId);
     return `${sourceNode?.name ?? sourceNode?.type ?? pendingConnection.sourceNodeId} → ${port?.name ?? pendingConnection.sourcePortId}`;
-  }, [pendingConnection, doc.nodes]);
+  }, [pendingConnection, document.nodes]);
 
   // Inspector only makes sense for exactly one selected node (matching
   // typical n8n/canvas-editor behavior) -- with a multi-selection it stays
   // closed rather than picking an arbitrary one to show.
   const selectedNode =
-    selectedNodeIds.size === 1 ? (doc.nodes.find((n) => selectedNodeIds.has(n.id)) ?? null) : null;
+    selectedNodeIds.size === 1 ? (document.nodes.find((n) => selectedNodeIds.has(n.id)) ?? null) : null;
 
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh' }}>
       <Palette
         pendingConnectionLabel={pendingConnectionLabel}
-        onCancelPending={() => setPendingConnection(null)}
+        onCancelPending={() => useDiagramStore.getState().setPendingConnection(null)}
         onPick={handlePickForPendingConnection}
       />
       <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver}>
@@ -229,7 +191,11 @@ function CanvasApp() {
         </ReactFlow>
       </div>
       {selectedNode && (
-        <Inspector node={selectedNode} onUpdateData={onUpdateNodeData} onClose={() => setSelectedNodeIds(new Set())} />
+        <Inspector
+          node={selectedNode}
+          onUpdateData={onUpdateNodeData}
+          onClose={() => useDiagramStore.getState().setSelection(new Set())}
+        />
       )}
     </div>
   );
