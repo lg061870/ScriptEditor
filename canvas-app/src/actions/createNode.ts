@@ -14,17 +14,28 @@ export function nextEdgeId(): string {
   return `edge-${Date.now()}-${edgeCounter}`;
 }
 
-/** Every new node gets one generic Input/Output main-role port pair --
- * branching activities generating one port per case is Phase 4.4, not
- * this task. Seeded types (registry/activityDefinitions.ts) get their
- * defaultData; unseeded types get an empty data dict. */
+/** Phase 4.1: a seeded type's ports come from its own definition
+ * (registry/activityDefinitions.ts, sourced from docs/activity-shapes.md) --
+ * role is explicit per port, never inferred. An unseeded type (the other 30
+ * of the 36-shape catalog, pending Phase 5) falls back to a generic
+ * main-role Input/Output pair. Branching activities generating one port per
+ * case is Phase 4.4, not this task. Seeded types get their defaultData;
+ * unseeded types get an empty data dict. */
 export function createDiagramNode(type: string, position: { x: number; y: number }): DiagramNode {
   const definition = getActivityDefinition(type);
   const id = nextNodeId();
-  const ports: DiagramPort[] = [
-    { id: `${id}-in`, name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
-    { id: `${id}-out`, name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+  const portTemplates = definition?.ports ?? [
+    { idSuffix: 'in', name: 'Input', direction: 'input' as const, role: 'main' as const, type: 'flow', position: 'left' as const },
+    { idSuffix: 'out', name: 'Output', direction: 'output' as const, role: 'main' as const, type: 'flow', position: 'right' as const },
   ];
+  const ports: DiagramPort[] = portTemplates.map((template) => ({
+    id: `${id}-${template.idSuffix}`,
+    name: template.name,
+    direction: template.direction,
+    role: template.role,
+    type: template.type,
+    position: template.position,
+  }));
 
   return {
     id,

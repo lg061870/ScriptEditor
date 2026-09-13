@@ -17,9 +17,13 @@ export const sampleDocument: DiagramDocument = {
       x: 0,
       y: 0,
       data: { message: 'Thanks for chatting! How can I help you today?' },
+      // Matches SimpleActivity's real port shape (registry/activityDefinitions.ts,
+      // sourced from docs/activity-shapes.md) -- Phase 4.1.
       ports: [
         { id: 'n1-in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
         { id: 'n1-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+        { id: 'n1-exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'right' },
+        { id: 'n1-control', name: 'Control', direction: 'output', role: 'control', type: 'flow', position: 'right' },
       ],
       context: { reads: [], writes: [] },
     },
