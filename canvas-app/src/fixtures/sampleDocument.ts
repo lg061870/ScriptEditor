@@ -16,7 +16,7 @@ export const sampleDocument: DiagramDocument = {
       name: 'greet',
       x: 0,
       y: 0,
-      data: {},
+      data: { message: 'Thanks for chatting! How can I help you today?' },
       ports: [
         { id: 'n1-in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
         { id: 'n1-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },

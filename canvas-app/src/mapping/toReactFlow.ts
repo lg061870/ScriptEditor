@@ -5,6 +5,10 @@ export interface DiagramNodeData extends Record<string, unknown> {
   label: string;
   type: string;
   ports: DiagramPort[];
+  /** Raw activity parameters (DiagramNode.data) -- the collapsed node's
+   * summary line (Phase 1.2) and the Inspector's field form (Phase 1.5)
+   * both read from this. */
+  rawData: Record<string, string>;
 }
 
 const SIDE_TO_POSITION: Record<DiagramPortSide, Position> = {
@@ -30,6 +34,7 @@ export function toReactFlowNodes(document: DiagramDocument): Node<DiagramNodeDat
       label: node.name ?? node.type,
       type: node.type,
       ports: node.ports,
+      rawData: node.data,
     },
   }));
 }

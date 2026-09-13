@@ -1,14 +1,33 @@
 import { Handle, type NodeProps, type Node } from '@xyflow/react';
 import { sideToPosition, type DiagramNodeData } from '../mapping/toReactFlow';
+import { getActivityDefinition, getNodeSummary } from '../registry/activityDefinitions';
 
 export type DiagramNodeType = Node<DiagramNodeData>;
 
-/** Phase 1.1: minimal rendering -- just proves the schema -> React Flow
- * mapping works (type/label + ports). Phase 1.2 replaces the body with
- * the collapsed n8n-style icon+title+summary treatment. */
-export function DiagramNode({ data }: NodeProps<DiagramNodeType>) {
+/** Collapsed n8n-style node (Phase 1.2): icon + title + one summary line
+ * only -- no inline parameter fields. Full field editing is the Inspector
+ * side panel (Phase 1.5), opened by selecting this node. */
+export function DiagramNode({ data, selected }: NodeProps<DiagramNodeType>) {
+  const definition = getActivityDefinition(data.type);
+  const title = definition?.title ?? data.label;
+  const summary = getNodeSummary(data.type, data.rawData);
+  const color = definition?.color ?? '#6b7280';
+
   return (
-    <div style={{ padding: 10, border: '1px solid #333', borderRadius: 6, background: '#fff', minWidth: 160 }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 12px',
+        border: selected ? `1.5px solid ${color}` : '1px solid #d1d5db',
+        borderRadius: 8,
+        background: '#fff',
+        minWidth: 200,
+        maxWidth: 240,
+        boxShadow: selected ? `0 0 0 2px ${color}33` : '0 1px 2px rgba(0,0,0,0.05)',
+      }}
+    >
       {data.ports.map((port) => (
         <Handle
           key={port.id}
@@ -17,8 +36,42 @@ export function DiagramNode({ data }: NodeProps<DiagramNodeType>) {
           position={sideToPosition(port.position)}
         />
       ))}
-      <div style={{ fontWeight: 600 }}>{data.label}</div>
-      <div style={{ fontSize: 11, color: '#666' }}>{data.type}</div>
+      <div
+        aria-hidden
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 6,
+          background: color,
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 12,
+          fontWeight: 700,
+          flexShrink: 0,
+        }}
+      >
+        {title.slice(0, 2).toUpperCase()}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {title}
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: '#6b7280',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 1,
+            WebkitBoxOrient: 'vertical',
+          }}
+        >
+          {summary}
+        </div>
+      </div>
     </div>
   );
 }
