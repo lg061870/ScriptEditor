@@ -4,6 +4,7 @@ import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { Inspector } from './components/Inspector';
+import { CodePreview } from './components/CodePreview';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
 import { useDiagramStore } from './store/diagramStore';
 
@@ -169,34 +170,37 @@ function CanvasApp() {
     selectedNodeIds.size === 1 ? (document.nodes.find((n) => selectedNodeIds.has(n.id)) ?? null) : null;
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh' }}>
-      <Palette
-        pendingConnectionLabel={pendingConnectionLabel}
-        onCancelPending={() => useDiagramStore.getState().setPendingConnection(null)}
-        onPick={handlePickForPendingConnection}
-      />
-      <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver} data-testid="canvas-surface">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          deleteKeyCode={['Backspace', 'Delete']}
-          fitView
-        >
-          <Background />
-          <Controls />
-          <MiniMap />
-        </ReactFlow>
-      </div>
-      {selectedNode && (
-        <Inspector
-          node={selectedNode}
-          onUpdateData={onUpdateNodeData}
-          onClose={() => useDiagramStore.getState().setSelection(new Set())}
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh' }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+        <Palette
+          pendingConnectionLabel={pendingConnectionLabel}
+          onCancelPending={() => useDiagramStore.getState().setPendingConnection(null)}
+          onPick={handlePickForPendingConnection}
         />
-      )}
+        <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver} data-testid="canvas-surface">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            deleteKeyCode={['Backspace', 'Delete']}
+            fitView
+          >
+            <Background />
+            <Controls />
+            <MiniMap />
+          </ReactFlow>
+        </div>
+        {selectedNode && (
+          <Inspector
+            node={selectedNode}
+            onUpdateData={onUpdateNodeData}
+            onClose={() => useDiagramStore.getState().setSelection(new Set())}
+          />
+        )}
+      </div>
+      <CodePreview document={document} />
     </div>
   );
 }
