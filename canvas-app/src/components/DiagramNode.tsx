@@ -1,6 +1,7 @@
 import { Handle, type NodeProps, type Node } from '@xyflow/react';
 import { sideToPosition, type DiagramNodeData } from '../mapping/toReactFlow';
 import { getActivityDefinition, getNodeSummary } from '../registry/activityDefinitions';
+import { portHandleStyle } from '../rendering/portStyle';
 
 export type DiagramNodeType = Node<DiagramNodeData>;
 
@@ -39,6 +40,8 @@ export function DiagramNode({ id, data, selected }: NodeProps<DiagramNodeType>) 
           id={port.id}
           type={port.direction === 'input' ? 'target' : 'source'}
           position={sideToPosition(port.position)}
+          title={`${port.name} (${port.role})`}
+          style={portHandleStyle(port.role)}
         />
       ))}
       {/* Phase 1.4: "+" on every unconnected output port -- opens the

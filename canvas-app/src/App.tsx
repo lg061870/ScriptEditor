@@ -2,6 +2,7 @@ import { useCallback, useMemo, type DragEvent } from 'react';
 import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, useReactFlow, type OnNodesChange, type OnEdgesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
+import { RoleEdge } from './components/RoleEdge';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
 import { Inspector } from './components/Inspector';
 import { CodePanel } from './components/CodePanel';
@@ -9,6 +10,7 @@ import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
 import { useDiagramStore } from './store/diagramStore';
 
 const nodeTypes = { diagramNode: DiagramNode };
+const edgeTypes = { roleEdge: RoleEdge };
 
 export default function App() {
   return (
@@ -182,6 +184,7 @@ function CanvasApp() {
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             deleteKeyCode={['Backspace', 'Delete']}
