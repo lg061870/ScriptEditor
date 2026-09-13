@@ -12,6 +12,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { DiagramNode } from './components/DiagramNode';
 import { Palette, PALETTE_DND_TYPE } from './components/Palette';
+import { Inspector } from './components/Inspector';
 import { toReactFlowNodes, toReactFlowEdges } from './mapping/toReactFlow';
 import { createDiagramNode, nextEdgeId } from './actions/createNode';
 import { sampleDocument } from './fixtures/sampleDocument';
@@ -35,7 +36,15 @@ export default function App() {
 function CanvasApp() {
   const [doc, setDoc] = useState<DiagramDocument>(sampleDocument);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { screenToFlowPosition } = useReactFlow();
+
+  const onUpdateNodeData = useCallback((nodeId: string, key: string, value: string) => {
+    setDoc((d) => ({
+      ...d,
+      nodes: d.nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, [key]: value } } : n)),
+    }));
+  }, []);
 
   // Phase 1.4: clicking "+" on a dangling output port arms this instead of
   // creating anything directly -- the palette then switches into
@@ -48,7 +57,10 @@ function CanvasApp() {
   // Memoized so identity is stable across renders that don't change `doc`
   // -- otherwise React Flow's node-measurement lifecycle sees a "new" node
   // array every render and nodes get stuck at visibility:hidden.
-  const nodes = useMemo(() => toReactFlowNodes(doc, { onRequestAddNode }), [doc, onRequestAddNode]);
+  const nodes = useMemo(
+    () => toReactFlowNodes(doc, { onRequestAddNode, selectedNodeId }),
+    [doc, onRequestAddNode, selectedNodeId],
+  );
   const edges = useMemo(() => toReactFlowEdges(doc), [doc]);
 
   // Position drags flow back into `doc` here -- `nodes` above is always
@@ -66,15 +78,32 @@ function CanvasApp() {
       (change): change is Extract<typeof change, { type: 'position' }> =>
         change.type === 'position' && change.position !== undefined,
     );
-    if (positionChanges.length === 0) return;
+    if (positionChanges.length > 0) {
+      setDoc((d) => {
+        const byId = new Map(positionChanges.map((c) => [c.id, c.position!]));
+        return {
+          ...d,
+          nodes: d.nodes.map((n) => (byId.has(n.id) ? { ...n, x: byId.get(n.id)!.x, y: byId.get(n.id)!.y } : n)),
+        };
+      });
+    }
 
-    setDoc((d) => {
-      const byId = new Map(positionChanges.map((c) => [c.id, c.position!]));
-      return {
-        ...d,
-        nodes: d.nodes.map((n) => (byId.has(n.id) ? { ...n, x: byId.get(n.id)!.x, y: byId.get(n.id)!.y } : n)),
-      };
-    });
+    // Selection drives the Inspector panel (Phase 1.5). This is the only
+    // reliable place it arrives: React Flow's dedicated onSelectionChange
+    // prop does NOT fire for a plain single-node click in this version --
+    // only onNodesChange receives the `select` change (confirmed by
+    // instrumenting both during development). A click batch can carry
+    // both a deselect for the previous node and a select for the new one
+    // in either order, so find the one with `selected: true` rather than
+    // just taking the first 'select' change; none found means the click
+    // deselected everything (e.g. clicked empty canvas) -> close the panel.
+    const selectChanges = changes.filter(
+      (change): change is Extract<typeof change, { type: 'select' }> => change.type === 'select',
+    );
+    if (selectChanges.length > 0) {
+      const newlySelected = selectChanges.find((change) => change.selected);
+      setSelectedNodeId(newlySelected ? newlySelected.id : null);
+    }
   }, []);
 
   const onEdgesChange: OnEdgesChange = useCallback((changes) => {
@@ -140,6 +169,8 @@ function CanvasApp() {
     return `${sourceNode?.name ?? sourceNode?.type ?? pendingConnection.sourceNodeId} → ${port?.name ?? pendingConnection.sourcePortId}`;
   }, [pendingConnection, doc.nodes]);
 
+  const selectedNode = selectedNodeId ? (doc.nodes.find((n) => n.id === selectedNodeId) ?? null) : null;
+
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh' }}>
       <Palette
@@ -161,6 +192,9 @@ function CanvasApp() {
           <MiniMap />
         </ReactFlow>
       </div>
+      {selectedNode && (
+        <Inspector node={selectedNode} onUpdateData={onUpdateNodeData} onClose={() => setSelectedNodeId(null)} />
+      )}
     </div>
   );
 }

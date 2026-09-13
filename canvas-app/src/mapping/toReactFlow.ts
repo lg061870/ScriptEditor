@@ -31,6 +31,13 @@ export function sideToPosition(side: DiagramPortSide): Position {
 
 export interface ToReactFlowNodesOptions {
   onRequestAddNode?: (nodeId: string, portId: string) => void;
+  /** When `nodes` is a fully-controlled prop (never React Flow's own
+   * internal state), selection must round-trip through it too: React Flow
+   * marks a node selected internally on click and fires onSelectionChange,
+   * but the very next render hands it back a `nodes` array with no
+   * `selected` field, which it treats as authoritative and reverts the
+   * click. Passing the current selection back in here closes that loop. */
+  selectedNodeId?: string | null;
 }
 
 /** DiagramDocument.nodes -> React Flow nodes. Each DiagramPort is passed
@@ -46,6 +53,7 @@ export function toReactFlowNodes(
     id: node.id,
     type: 'diagramNode',
     position: { x: node.x, y: node.y },
+    selected: node.id === options.selectedNodeId,
     data: {
       label: node.name ?? node.type,
       type: node.type,
