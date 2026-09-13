@@ -116,6 +116,56 @@ export function roundedPolylinePath(points: Point[], radius: number): string {
 export const OBSTACLE_MARGIN = 16;
 export const DETOUR_CORNER_RADIUS = 14;
 
+/**
+ * Phase 4.6: a backward edge (its target column left of its source
+ * column) or one explicitly flagged `isLoop` (DiagramEdge.isLoop, Phase
+ * 0.3 -- for a loop that isn't geometrically backward, e.g. a same-column
+ * self-loop) is a loop-back, not just an obstructed forward edge.
+ */
+export function isBackwardEdge(sourceNodeX: number, targetNodeX: number, explicitIsLoop: boolean | undefined): boolean {
+  return explicitIsLoop === true || targetNodeX < sourceNodeX;
+}
+
+export const LOOP_CHANNEL_MARGIN = 40;
+export const LOOP_LANE_SPACING = 20;
+
+/**
+ * The n8n self-loop pattern (docs/n8n-feature-gap-analysis.md §2): "it
+ * drops down, runs along a shared bottom channel, and comes back up into
+ * the input side of an earlier node." Always this shape for a loop edge
+ * -- unlike buildDetourPath (Phase 4.5), which only detours when
+ * something is actually in the way, a loop reads as "this loops" from
+ * its route alone, every time, not just when it happens to be obstructed.
+ *
+ * `allNodeBottoms` should be every node's own bottom edge (y + height) in
+ * the document, source/target included -- the channel has to clear the
+ * source and target nodes' own footprints too, not just nodes in between.
+ * `laneIndex` staggers multiple concurrent loop edges onto slightly
+ * different channel heights so two loops don't render as one overlapping
+ * line -- 0 for the (common) case of just one.
+ */
+export function buildLoopPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  allNodeBottoms: number[],
+  laneIndex = 0,
+): string {
+  const lowestBottom = allNodeBottoms.length > 0 ? Math.max(...allNodeBottoms) : Math.max(sourceY, targetY);
+  const channelY = lowestBottom + LOOP_CHANNEL_MARGIN + laneIndex * LOOP_LANE_SPACING;
+
+  return roundedPolylinePath(
+    [
+      { x: sourceX, y: sourceY },
+      { x: sourceX, y: channelY },
+      { x: targetX, y: channelY },
+      { x: targetX, y: targetY },
+    ],
+    DETOUR_CORNER_RADIUS,
+  );
+}
+
 /** Builds a detour path (source -> above/below the blocking obstacles ->
  * target) as three segments with rounded corners. Caller decides whether
  * to use this at all (only when findBlockingObstacles found something --

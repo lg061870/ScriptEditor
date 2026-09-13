@@ -5,6 +5,10 @@ import {
   chooseDetourY,
   roundedPolylinePath,
   buildDetourPath,
+  isBackwardEdge,
+  buildLoopPath,
+  LOOP_CHANNEL_MARGIN,
+  LOOP_LANE_SPACING,
   type Rect,
 } from '../rendering/edgeRouting';
 
@@ -151,5 +155,50 @@ describe('buildDetourPath', () => {
     expect(d).toContain('M 0,100');
     expect(d).toMatch(/90/); // the detour height appears somewhere in the path
     expect(d).toContain('300,100'); // ends at the target
+  });
+});
+
+/**
+ * Phase 4.6's acceptance criteria: backward edges (target column < source
+ * column, or an explicit "loop" edge role) route through a distinct
+ * bottom/side channel rather than the generic obstacle-aware router.
+ */
+describe('isBackwardEdge', () => {
+  it('is backward when the target column is left of the source column', () => {
+    expect(isBackwardEdge(300, 100, undefined)).toBe(true);
+  });
+
+  it('is not backward for a normal forward edge, with no explicit flag', () => {
+    expect(isBackwardEdge(0, 300, undefined)).toBe(false);
+  });
+
+  it('an explicit isLoop:true flag forces backward even for a geometrically-forward edge (e.g. a same-column self-loop)', () => {
+    expect(isBackwardEdge(100, 100, true)).toBe(true);
+  });
+
+  it('isLoop:false never overrides forward geometry to backward', () => {
+    expect(isBackwardEdge(0, 300, false)).toBe(false);
+  });
+});
+
+describe('buildLoopPath', () => {
+  it('routes below the lowest node bottom by the channel margin, not through the direct line', () => {
+    const d = buildLoopPath(300, 50, 0, 50, [120, 90]); // lowest bottom = 120
+    expect(d).toContain('M 300,50');
+    expect(d).toContain(`${120 + LOOP_CHANNEL_MARGIN}`);
+    expect(d).toContain('0,50');
+  });
+
+  it('falls back to clearing source/target Y when no node bottoms are known', () => {
+    const d = buildLoopPath(300, 80, 0, 50, []);
+    expect(d).toContain(`${80 + LOOP_CHANNEL_MARGIN}`); // max(sourceY, targetY) = 80
+  });
+
+  it('staggers concurrent loop lanes by index so they do not overlap', () => {
+    const lane0 = buildLoopPath(300, 50, 0, 50, [100], 0);
+    const lane1 = buildLoopPath(300, 50, 0, 50, [100], 1);
+    expect(lane0).toContain(`${100 + LOOP_CHANNEL_MARGIN}`);
+    expect(lane1).toContain(`${100 + LOOP_CHANNEL_MARGIN + LOOP_LANE_SPACING}`);
+    expect(lane0).not.toBe(lane1);
   });
 });

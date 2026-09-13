@@ -1,13 +1,24 @@
 import { BaseEdge, getBezierPath, useStore, type EdgeProps, type Edge, type ReactFlowState } from '@xyflow/react';
 import type { DiagramPortRole } from '../schema/diagram';
 import { edgeLineStyle } from '../rendering/portStyle';
-import { findBlockingObstacles, buildDetourPath, OBSTACLE_MARGIN, type Rect } from '../rendering/edgeRouting';
+import { findBlockingObstacles, buildDetourPath, buildLoopPath, OBSTACLE_MARGIN, type Rect } from '../rendering/edgeRouting';
 
 export interface RoleEdgeData extends Record<string, unknown> {
   /** The edge's *source* port role (mapping/toReactFlow.ts resolves this
    * from the source node's own port list) -- an edge's line style always
    * follows where it comes FROM, not where it lands. */
   sourceRole?: DiagramPortRole;
+  /** Phase 4.6: resolved once in mapping/toReactFlow.ts (it needs both
+   * nodes' x positions and the edge's own DiagramEdge.isLoop flag, neither
+   * of which this component has on its own) -- true routes via
+   * buildLoopPath's dedicated bottom channel instead of the generic
+   * obstacle-aware router, regardless of whether anything is in the way. */
+  isLoop?: boolean;
+  /** This edge's 0-based position among all concurrent loop edges
+   * (mapping/toReactFlow.ts), so multiple loops stack onto slightly
+   * different channel heights instead of overlapping. Meaningless when
+   * `isLoop` is false. */
+  loopLaneIndex?: number;
 }
 
 export type RoleEdgeType = Edge<RoleEdgeData>;
@@ -23,13 +34,30 @@ const selectObstacleRects = (excludeIds: Set<string>) => (state: ReactFlowState)
   return rects;
 };
 
+/** Every node's own bottom edge, source/target included -- a loop's
+ * shared channel has to clear their footprints too, not just nodes in
+ * between (see buildLoopPath's doc comment). */
+const selectAllNodeBottoms = (state: ReactFlowState): number[] => {
+  const bottoms: number[] = [];
+  for (const node of state.nodeLookup.values()) {
+    const { height } = node.measured;
+    if (!height) continue;
+    bottoms.push(node.internals.positionAbsolute.y + height);
+  }
+  return bottoms;
+};
+
 /**
  * Phase 4.2: line style (solid/dashed, color) follows the source port's
  * role. Phase 4.5: geometry is no longer always the plain two-point
  * Bezier -- every OTHER node's measured bounding box is checked against
  * the direct source->target line (rendering/edgeRouting.ts), and only an
  * edge that line would actually pass through gets routed around it; an
- * unobstructed edge keeps the exact same Bezier as before.
+ * unobstructed edge keeps the exact same Bezier as before. Phase 4.6: a
+ * loop edge (`data.isLoop`) skips both of those entirely and always
+ * routes via buildLoopPath's dedicated bottom channel, per the n8n
+ * self-loop pattern -- a loop reads as "this loops" from its route alone,
+ * not only when something happens to be in its way.
  *
  * Reads react-flow's internal `nodeLookup` store (via useStore), not the
  * `useNodes()` hook: useNodes() returns exactly the `nodes` prop this app
@@ -55,13 +83,19 @@ export function RoleEdge({
 }: EdgeProps<RoleEdgeType>) {
   const excludeIds = new Set([source, target]);
   const obstacles = useStore(selectObstacleRects(excludeIds));
+  const allNodeBottoms = useStore(selectAllNodeBottoms);
   const { stroke, strokeWidth, strokeDasharray } = edgeLineStyle(data?.sourceRole);
 
-  const blocking = findBlockingObstacles(sourceX, sourceY, targetX, targetY, obstacles, OBSTACLE_MARGIN);
-  const edgePath =
-    blocking.length > 0
-      ? buildDetourPath(sourceX, sourceY, targetX, targetY, blocking)
-      : getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })[0];
+  let edgePath: string;
+  if (data?.isLoop) {
+    edgePath = buildLoopPath(sourceX, sourceY, targetX, targetY, allNodeBottoms, data.loopLaneIndex ?? 0);
+  } else {
+    const blocking = findBlockingObstacles(sourceX, sourceY, targetX, targetY, obstacles, OBSTACLE_MARGIN);
+    edgePath =
+      blocking.length > 0
+        ? buildDetourPath(sourceX, sourceY, targetX, targetY, blocking)
+        : getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })[0];
+  }
 
   return (
     <BaseEdge
