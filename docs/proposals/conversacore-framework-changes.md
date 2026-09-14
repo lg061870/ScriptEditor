@@ -1,6 +1,11 @@
 # Proposal: ConversaCore framework changes to enable JSON-driven activity generation
 
-**Status:** Proposed, not yet implemented or filed against `InsuranceSemanticV2`/`ConversaCore`.
+**Status:** Filed against `InsuranceSemanticV2` as
+[issue #115](https://github.com/lg061870/InsuranceSemanticV2/issues/115)
+once this session gained write access to that repo. Not yet implemented.
+The related tooling gap (InvokeToolActivity/IConversaTool layer not
+reachable from that repo's remote) is tracked separately as
+[issue #114](https://github.com/lg061870/InsuranceSemanticV2/issues/114).
 **Origin:** Surfaced while building the Phase 3.1/3.2 Roslyn transcriber
 (`Transcription/JsonToCSharpTranscriber.cs`, `Transcription/CSharpToJsonParser.cs`)
 — see [issue #20](https://github.com/lg061870/ScriptEditor/issues/20),
@@ -8,9 +13,11 @@
 follow-up gap tracker
 [issue #46](https://github.com/lg061870/ScriptEditor/issues/46).
 
-This session does not have write access to `lg061870/InsuranceSemanticV2`
-(the actual framework repo), so this is recorded here as a written proposal
-rather than filed there directly. Port to issues in that repo when ready.
+This doc predates this session having write access to
+`lg061870/InsuranceSemanticV2` (the actual framework repo), so it was
+recorded here as a written proposal first. Kept as-is (not deleted) as the
+source this session ported #115 from — see that issue for the
+canonical, up-to-date copy going forward.
 
 ## Context
 
