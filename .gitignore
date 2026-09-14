@@ -21,3 +21,15 @@ obj/
 
 # Logs
 *.log
+
+# Spike demo apps (throwaway, Phase 0.1)
+spike/*/node_modules
+spike/*/dist
+
+# canvas-app (standalone frontend)
+canvas-app/node_modules
+canvas-app/dist
+
+# Stray node/npx caches at the repo root (e.g. from an npx invocation run
+# with the wrong cwd) -- nothing here is meant to live at the repo root.
+/node_modules
