@@ -75,20 +75,30 @@ describe('chooseDetourY', () => {
   it('routes above when the obstacle sits below the midline (shorter deviation upward)', () => {
     const obstacle: Rect = { x: 0, y: 150, width: 50, height: 50 }; // spans 150-200
     // midline is 100; top (150) is closer to 100 than bottom (200) is.
-    expect(chooseDetourY(100, 100, [obstacle])).toBe(150);
+    expect(chooseDetourY(100, 100, [obstacle], 0)).toBe(150);
   });
 
   it('routes below when the obstacle sits above the midline (shorter deviation downward)', () => {
     const obstacle: Rect = { x: 0, y: 0, width: 50, height: 50 }; // spans 0-50
     // midline is 100; bottom (50) is closer to 100 than top (0) is.
-    expect(chooseDetourY(100, 100, [obstacle])).toBe(50);
+    expect(chooseDetourY(100, 100, [obstacle], 0)).toBe(50);
   });
 
   it('clears the full union of multiple obstacles, not just one', () => {
     const a: Rect = { x: 0, y: 40, width: 20, height: 20 }; // top 40
     const b: Rect = { x: 100, y: 60, width: 20, height: 20 }; // bottom 80
     // midline 0; top of union is 40 (closer than bottom 80) -> route above at y=40.
-    expect(chooseDetourY(0, 0, [a, b])).toBe(40);
+    expect(chooseDetourY(0, 0, [a, b], 0)).toBe(40);
+  });
+
+  it('applies margin so detour clears the obstacle with breathing room rather than grazing borders', () => {
+    const obstacle: Rect = { x: 0, y: 150, width: 50, height: 50 }; // spans 150-200
+    // midline 100; top is 150 - 24 = 126
+    expect(chooseDetourY(100, 100, [obstacle], 24)).toBe(126);
+
+    const obstacleAbove: Rect = { x: 0, y: 0, width: 50, height: 50 }; // spans 0-50
+    // midline 100; bottom is 50 + 24 = 74
+    expect(chooseDetourY(100, 100, [obstacleAbove], 24)).toBe(74);
   });
 });
 
@@ -151,9 +161,9 @@ describe('buildDetourPath', () => {
     const obstacle: Rect = { x: 100, y: 90, width: 40, height: 40 }; // spans 90-130
     const d = buildDetourPath(0, 100, 300, 100, [obstacle]);
 
-    // Should route above (closer deviation): detourY = 90.
+    // Should route above (closer deviation) with OBSTACLE_MARGIN (24): detourY = 90 - 24 = 66.
     expect(d).toContain('M 0,100');
-    expect(d).toMatch(/90/); // the detour height appears somewhere in the path
+    expect(d).toMatch(/66/); // the detour height appears somewhere in the path (clearing obstacle with margin)
     expect(d).toContain('300,100'); // ends at the target
   });
 });

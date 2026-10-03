@@ -17,12 +17,18 @@
 
 import type { DiagramPortDirection, DiagramPortRole, DiagramPortSide } from '../schema/diagram';
 
-export type ActivityFieldKind = 'text' | 'textarea' | 'number' | 'boolean';
+export type ActivityFieldKind = 'text' | 'textarea' | 'number' | 'boolean' | 'topic' | 'select';
+
+export interface ActivityFieldOption {
+  value: string;
+  label: string;
+}
 
 export interface ActivityFieldDef {
   key: string;
   label: string;
   kind: ActivityFieldKind;
+  options?: ActivityFieldOption[];
 }
 
 /**
@@ -46,8 +52,12 @@ export interface ActivityPortDef {
 
 const MAIN_INPUT: ActivityPortDef = { idSuffix: 'in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' };
 const MAIN_OUTPUT: ActivityPortDef = { idSuffix: 'out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' };
-const EXCEPTION_OUTPUT: ActivityPortDef = { idSuffix: 'exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'right' };
+const EXCEPTION_OUTPUT: ActivityPortDef = { idSuffix: 'exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'bottom' };
 const CONTROL_OUTPUT: ActivityPortDef = { idSuffix: 'control', name: 'Control', direction: 'output', role: 'control', type: 'flow', position: 'right' };
+
+const CARD_INPUT: ActivityPortDef = { idSuffix: 'card', name: 'Card', direction: 'input', role: 'aux-config', type: 'adaptive-card', position: 'left' };
+const MODEL_INPUT: ActivityPortDef = { idSuffix: 'model', name: 'Model', direction: 'input', role: 'aux-config', type: 'adaptive-model', position: 'left' };
+const ADAPTIVE_CARD_PORTS: ActivityPortDef[] = [MAIN_INPUT, MAIN_OUTPUT, EXCEPTION_OUTPUT, CARD_INPUT, MODEL_INPUT, CONTROL_OUTPUT];
 
 /** Input/Output/Exception/Control -- the shape every seeded type but
  * AdaptiveCardActivity has, per docs/activity-shapes.md. */
@@ -70,9 +80,33 @@ export interface ActivityDefinition {
   getSummary: (data: Record<string, string>) => string;
 }
 
+export interface CompositeChildStep {
+  id: string;
+  type: string;
+  name: string;
+  data: Record<string, string>;
+}
+
+export const DEFAULT_COMPOSITE_STEPS: CompositeChildStep[] = [
+  { id: 'step_1', type: 'SimpleActivity', name: 'Step1_Notice', data: { message: 'Starting composite sequence...' } },
+];
+
+export function parseCompositeSteps(rawData?: Record<string, string>): CompositeChildStep[] {
+  if (rawData?.steps) {
+    try {
+      const parsed = JSON.parse(rawData.steps);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return DEFAULT_COMPOSITE_STEPS;
+}
+
 /** Splits a delimited case-list field into trimmed, non-empty labels --
- * e.g. "case-a | case-b" (pipe, SwitchActivity/ConditionalActivity) or
- * "CoverageEstimate, CompareTermVsWhole, Quote" (comma, Conditional<TriggerTopic>). */
+ * e.g. "case-a | case-b" (pipe, SwitchActivity/ConditionalActivity). */
 function parseDelimitedLabels(raw: string | undefined, delimiter: string): string[] {
   if (!raw) return [];
   return raw
@@ -81,13 +115,6 @@ function parseDelimitedLabels(raw: string | undefined, delimiter: string): strin
     .filter((s) => s.length > 0);
 }
 
-/** Conditional<QuickAnswer>'s `branchMatch` field is comma-separated
- * "label -> action" pairs (e.g. "StillLearning -> ask"); the port
- * represents the matched *label* (the case being tested), not the action
- * it maps to -- the same role SwitchActivity's case keys play. */
-function parseBranchMatchLabels(raw: string | undefined): string[] {
-  return parseDelimitedLabels(raw, ',').map((segment) => segment.split('->')[0]?.trim() ?? segment);
-}
 
 function slugify(label: string): string {
   return label
@@ -134,6 +161,83 @@ function branchingPorts(
   };
 }
 
+/**
+ * Ports for ConditionalActivity (If..Else condition):
+ * - Input: left vertex
+ * - Yes (first branch): right vertex
+ * - No (second branch): bottom vertex (replaces where exception port was)
+ * - Exception: top vertex (introducing balanced 4-vertex diamond symmetry)
+ * - Control: hidden control output
+ */
+function conditionalPorts(data: Record<string, string>): ActivityPortDef[] {
+  const cases = parseDelimitedLabels(data.cases || 'Yes | No', '|');
+  const used = new Set<string>();
+  const portDefs: ActivityPortDef[] = [MAIN_INPUT];
+
+  cases.forEach((label, index) => {
+    let idSuffix = `case-${slugify(label) || index}`;
+    while (used.has(idSuffix)) idSuffix = `${idSuffix}-${index}`;
+    used.add(idSuffix);
+    // First case (Yes) on right apex, second case (No) on bottom apex, any additional on right
+    const position: DiagramPortSide = index === 1 ? 'bottom' : 'right';
+    portDefs.push({ idSuffix, name: label, direction: 'output', role: 'main', type: 'flow', position });
+  });
+
+  const hasDefault = Boolean(data.defaultBranch?.trim());
+  if (hasDefault) {
+    portDefs.push(DEFAULT_PORT);
+  }
+
+  // Exception port on top apex of the diamond shape
+  portDefs.push({ idSuffix: 'exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'top' });
+  portDefs.push(CONTROL_OUTPUT);
+
+  return portDefs;
+}
+
+export function parseParallelBranchLabels(rawBranches?: string, branchCount?: string): string[] {
+  if (rawBranches && rawBranches.trim().length > 0) {
+    const list = parseDelimitedLabels(rawBranches, '|');
+    if (list.length > 0) return list;
+  }
+  const count = parseInt(branchCount || '2', 10);
+  const n = isNaN(count) || count < 1 ? 2 : count;
+  return Array.from({ length: n }, (_, i) => `Branch ${i + 1}`);
+}
+
+function parallelPorts(data: Record<string, string>): ActivityPortDef[] {
+  const branchLabels = parseParallelBranchLabels(data.branches, data.branchCount);
+  const used = new Set<string>();
+  const branchDefs: ActivityPortDef[] = branchLabels.map((label, index) => {
+    let idSuffix = `branch-${slugify(label) || index + 1}`;
+    while (used.has(idSuffix)) idSuffix = `${idSuffix}-${index + 1}`;
+    used.add(idSuffix);
+    return { idSuffix, name: label, direction: 'output', role: 'main', type: 'flow', position: 'right' };
+  });
+
+  const hasJoinPort = data.includeJoinPort === 'true';
+  const joinPort: ActivityPortDef = {
+    idSuffix: 'branch-done',
+    name: 'Done',
+    direction: 'output',
+    role: 'control',
+    type: 'flow',
+    position: 'right',
+  };
+
+  return [MAIN_INPUT, ...branchDefs, ...(hasJoinPort ? [joinPort] : []), EXCEPTION_OUTPUT];
+}
+
+function repeatPorts(): ActivityPortDef[] {
+  return [
+    MAIN_INPUT,
+    { idSuffix: 'loop-body', name: 'Loop Body', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+    { idSuffix: 'loop-done', name: 'Done', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+    EXCEPTION_OUTPUT,
+    CONTROL_OUTPUT,
+  ];
+}
+
 const DEFINITIONS: ActivityDefinition[] = [
   {
     type: 'SimpleActivity',
@@ -172,47 +276,46 @@ const DEFINITIONS: ActivityDefinition[] = [
     // lambda + generic type args, no literal JSON form, the same gap
     // already flagged in JsonToCSharpTranscriber.cs). submissionContextKey/
     // required ARE the real SubmissionContextKey/IsRequired properties.
-    defaultData: { submissionContextKey: 'adaptive-card-activity-1', required: 'true' },
+    defaultData: {
+      submissionContextKey: 'adaptive-card-activity-1',
+      required: 'true',
+    },
     fields: [
       { key: 'submissionContextKey', label: 'Submission Context Key', kind: 'text' },
       { key: 'required', label: 'Required', kind: 'boolean' },
     ],
-    // The catalog's one shape with aux-config ports (docs/activity-shapes.md):
-    // Card/Model are extra config inputs alongside the regular flow Input,
-    // not part of the main in/out chain.
-    ports: [
-      MAIN_INPUT,
-      MAIN_OUTPUT,
-      EXCEPTION_OUTPUT,
-      { idSuffix: 'card', name: 'Card', direction: 'input', role: 'aux-config', type: 'card', position: 'left' },
-      { idSuffix: 'model', name: 'Model', direction: 'input', role: 'aux-config', type: 'model', position: 'left' },
-      CONTROL_OUTPUT,
-    ],
-    getSummary: (data) => `Submission: ${data.submissionContextKey} (Required: ${data.required})`,
+    ports: ADAPTIVE_CARD_PORTS,
+    getSummary: (data) => `Submission: ${data.submissionContextKey || 'adaptive-card-activity-1'} (Required: ${data.required !== 'false'})`,
   },
   {
     type: 'QuickAnswerActivity',
     title: 'Quick Choices',
     category: 'Interaction',
     color: '#f59e0b',
-    // Phase 5.3: field renamed from `options` to `answers`, matching both
-    // docs/activity-shapes.md and the real constructor
-    // (id, question, answers: IEnumerable<string>, context, logger,
-    // isRequired) exactly -- `required` added for the same reason. Still
-    // generic-fallback transcription only (no JsonToCSharpTranscriber
-    // case references the old or new key), so this rename is safe.
     defaultData: {
       question: 'Would you like an instant quote or to talk to an agent?',
+      optionsMode: 'static',
       answers: 'Instant Quote | Talk to Agent | More Info',
+      answersVariable: '',
+      outputVariable: 'selectedChoice',
       required: 'true',
     },
     fields: [
       { key: 'question', label: 'Question', kind: 'textarea' },
+      { key: 'optionsMode', label: 'Options Mode', kind: 'text' },
       { key: 'answers', label: 'Answers (pipe-separated)', kind: 'text' },
+      { key: 'answersVariable', label: 'Options Variable Name', kind: 'text' },
+      { key: 'outputVariable', label: 'Save Selection to Variable', kind: 'text' },
       { key: 'required', label: 'Required', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Q: ${data.question} [${data.answers}]`,
+    getSummary: (data) => {
+      const q = data.question || 'Choose an option';
+      const isVar = data.optionsMode === 'variable' || (data.answersVariable && data.optionsMode !== 'static');
+      const opts = isVar ? `{${data.answersVariable || 'choices'}}` : `[${data.answers || ''}]`;
+      const out = data.outputVariable ? ` -> {${data.outputVariable}}` : '';
+      return `Q: ${q} ${opts}${out}`;
+    },
   },
   {
     type: 'DelayActivity',
@@ -239,24 +342,31 @@ const DEFINITIONS: ActivityDefinition[] = [
     title: 'Composite Sequence',
     category: 'Flow',
     color: '#3b82f6',
-    // docs/activity-shapes.md lists a "Child Count" parameter (childCount,
-    // default 8), but the real class (CompositeActivity(string id,
-    // IEnumerable<TopicFlowActivity> activities)) takes actual nested
-    // child activities, not a count -- there's no factory or property
-    // that turns a number into children. That's a structural gap in the
-    // same category as SwitchActivity's nested-case constructor (#29's
-    // comment) and isn't attempted here; childCount is kept for
-    // doc-parity but doesn't drive anything transcribable yet.
-    // isolateContext/completeMessage ARE real settable properties
-    // (IsolateContext, CompleteMessage).
-    defaultData: { childCount: '8', isolateContext: 'false', completeMessage: 'Composite completed' },
+    defaultData: {
+      childCount: '1',
+      isolateContext: 'false',
+      completeMessage: 'Composite completed',
+      steps: JSON.stringify(DEFAULT_COMPOSITE_STEPS),
+    },
     fields: [
-      { key: 'childCount', label: 'Child Count (not yet transcribable)', kind: 'number' },
       { key: 'isolateContext', label: 'Isolate Context', kind: 'boolean' },
       { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `${data.childCount} children (isolated: ${data.isolateContext})`,
+    getSummary: (data) => {
+      const steps = parseCompositeSteps(data);
+      return `${steps.length} sequential step${steps.length === 1 ? '' : 's'} (isolated: ${data.isolateContext === 'true'})`;
+    },
+  },
+  {
+    type: 'StartNode',
+    title: 'Start',
+    category: 'Sequence',
+    color: '#10b981',
+    defaultData: {},
+    fields: [],
+    ports: [MAIN_OUTPUT],
+    getSummary: () => 'Workflow Entry Point',
   },
   {
     type: 'EndActivity',
@@ -272,11 +382,9 @@ const DEFINITIONS: ActivityDefinition[] = [
     // `message` param).
     defaultData: { endMessage: 'Done' },
     fields: [{ key: 'endMessage', label: 'End Message', kind: 'textarea' }],
-    // The one seeded type without a Control port -- docs/activity-shapes.md
-    // agrees: EndActivity terminates the flow, so there's nothing left to
-    // route a "control" continuation to.
-    ports: [MAIN_INPUT, MAIN_OUTPUT, EXCEPTION_OUTPUT],
-    getSummary: (data) => data.endMessage || 'End conversation',
+    // EndActivity terminates the flow -- 1 input, 0 outputs (terminal node).
+    ports: [MAIN_INPUT],
+    getSummary: (data) => data?.endMessage || 'End conversation',
   },
   {
     type: 'PromptActivity',
@@ -318,7 +426,7 @@ const DEFINITIONS: ActivityDefinition[] = [
     // round trip needed updating, not just the registry.
     defaultData: { topicToTrigger: 'QuoteGenerationTopic', waitForCompletion: 'true' },
     fields: [
-      { key: 'topicToTrigger', label: 'Topic To Trigger', kind: 'text' },
+      { key: 'topicToTrigger', label: 'Topic To Trigger', kind: 'topic' },
       { key: 'waitForCompletion', label: 'Wait For Completion', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
@@ -347,10 +455,8 @@ const DEFINITIONS: ActivityDefinition[] = [
   // structurally compatible with routing different downstream nodes per
   // port. SwitchActivity's real cases are nested TopicFlowActivity
   // objects passed directly into its constructor, not separate Add()
-  // statements a port-based edge could target, and ChoiceActivity's real
-  // RunActivity() calls a single TransitionTo(...) regardless of which
-  // option was chosen -- it doesn't branch execution per option at all.
-  // So these ports make branching *expressible on the canvas* for all 5
+  // statements a port-based edge could target.
+  // So these ports make branching *expressible on the canvas*
   // (this task's actual scope, a Phase 4/Ports-&-Routing concern); making
   // JsonToCSharpTranscriber emit real per-case C# for each of them is a
   // separate, larger Phase 3-adjacent gap, consistent with Phase 3.1's
@@ -358,45 +464,17 @@ const DEFINITIONS: ActivityDefinition[] = [
   // type without a specific generator.
   {
     type: 'ConditionalActivity',
-    title: 'Conditional Branch',
+    title: 'If Then Else',
     category: 'Logic',
     color: '#ec4899',
-    defaultData: { selectorKey: 'ConditionKey', cases: 'case-a | case-b', defaultBranch: '' },
+    defaultData: { selectorKey: 'ConditionKey', cases: 'Yes | No', defaultBranch: '' },
     fields: [
       { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
       { key: 'cases', label: 'Cases (pipe-separated)', kind: 'text' },
       { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
     ],
-    ports: branchingPorts((data) => parseDelimitedLabels(data.cases, '|'), 'defaultBranch'),
-    getSummary: (data) => `If ${data.selectorKey} in [${data.cases}]`,
-  },
-  {
-    type: 'Conditional<QuickAnswer>',
-    title: 'Branch on Quick Answer',
-    category: 'Logic',
-    color: '#ec4899',
-    defaultData: { selectorKey: 'Basics_LastDecisionLabel', branchMatch: 'StillLearning -> ask', defaultBranch: '' },
-    fields: [
-      { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
-      { key: 'branchMatch', label: 'Branch Match (label -> action, comma-separated)', kind: 'text' },
-      { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
-    ],
-    ports: branchingPorts((data) => parseBranchMatchLabels(data.branchMatch), 'defaultBranch'),
-    getSummary: (data) => `Branch on ${data.selectorKey}: ${data.branchMatch}`,
-  },
-  {
-    type: 'Conditional<TriggerTopic>',
-    title: 'Branch to Topic',
-    category: 'Logic',
-    color: '#ec4899',
-    defaultData: { selectorKey: 'Basics_NextMode', branches: 'CoverageEstimate, CompareTermVsWhole, Quote', defaultBranch: '' },
-    fields: [
-      { key: 'selectorKey', label: 'Selector Key', kind: 'text' },
-      { key: 'branches', label: 'Branches (comma-separated)', kind: 'text' },
-      { key: 'defaultBranch', label: 'Default Branch', kind: 'text' },
-    ],
-    ports: branchingPorts((data) => parseDelimitedLabels(data.branches, ','), 'defaultBranch'),
-    getSummary: (data) => `Route ${data.selectorKey} to [${data.branches}]`,
+    ports: conditionalPorts,
+    getSummary: (data) => (data.selectorKey ? `If ${data.selectorKey}` : 'If-Else Condition'),
   },
   {
     type: 'DecisionActivity',
@@ -429,20 +507,6 @@ const DEFINITIONS: ActivityDefinition[] = [
     ports: branchingPorts((data) => parseDelimitedLabels(data.caseKeys, '|'), 'defaultCase'),
     getSummary: (data) => `Switch on ${data.valueContextKey}: [${data.caseKeys}]`,
   },
-  {
-    type: 'ChoiceActivity',
-    title: 'Quick Reply Choice',
-    category: 'Logic',
-    color: '#ec4899',
-    defaultData: { question: 'How would you like to continue?', options: 'Option A | Option B', submissionKey: 'choice-activity-1' },
-    fields: [
-      { key: 'question', label: 'Question', kind: 'textarea' },
-      { key: 'options', label: 'Options (pipe-separated)', kind: 'text' },
-      { key: 'submissionKey', label: 'Submission Key', kind: 'text' },
-    ],
-    ports: branchingPorts((data) => parseDelimitedLabels(data.options, '|')),
-    getSummary: (data) => `Q: ${data.question} [${data.options}]`,
-  },
   // Phase 5.2: Iteration + Concurrency + Exception Handling categories
   // (docs/activity-shapes.md). RepeatActivity, ForEachActivity, and
   // ParallelActivity all require passing an actual nested TopicFlowActivity
@@ -456,77 +520,68 @@ const DEFINITIONS: ActivityDefinition[] = [
   // all simple single-string-message constructors with no such gap.
   {
     type: 'RepeatActivity',
-    title: 'Repeat Loop',
+    title: 'While',
     category: 'Logic',
     color: '#0891b2',
-    // Real class: RepeatActivity<TActivity>, 3 constructors, all requiring
-    // a Func<string, TopicWorkflowContext, TActivity> activityFactory
-    // delegate (no literal JSON form). `continuePrompt` matches one
-    // constructor's real string param; `collectionKey` matches the
-    // optional collectionContextKey param; `loopMode` is a UI-only
-    // concept (which of the 3 constructors to use) with no single
-    // corresponding real field.
-    defaultData: { loopMode: 'while predicate', collectionKey: 'BasicsLearningLoop_Collection', continuePrompt: 'custom predicate controls continuation' },
+    defaultData: {
+      loopMode: 'while predicate',
+      collectionKey: 'BasicsLearningLoop_Collection',
+      continuePrompt: 'custom predicate controls continuation',
+      iterationVariable: 'count',
+    },
     fields: [
-      { key: 'loopMode', label: 'Loop Mode (not yet transcribable)', kind: 'text' },
-      { key: 'collectionKey', label: 'Collection Key', kind: 'text' },
+      { key: 'iterationVariable', label: 'Counter Variable', kind: 'text' },
+      {
+        key: 'loopMode',
+        label: 'Loop Mode',
+        kind: 'select',
+        options: [
+          { value: 'user_prompt', label: 'User Prompted (Ask user to continue)' },
+          { value: 'fixed_count', label: 'Fixed Count (Repeat N times)' },
+          { value: 'while_condition', label: 'While Condition (Repeat while true)' },
+        ],
+      },
       { key: 'continuePrompt', label: 'Continue Prompt', kind: 'text' },
+      { key: 'collectionKey', label: 'Collection Key (Context variable)', kind: 'text' },
+      { key: 'iterations', label: 'Iterations (Count)', kind: 'number' },
+      { key: 'condition', label: 'Condition Expression', kind: 'text' },
     ],
-    ports: STANDARD_PORTS,
-    getSummary: (data) => `Repeat while: ${data.continuePrompt}`,
+    ports: repeatPorts,
+    getSummary: (data) =>
+      data.loopMode === 'fixed_count'
+        ? `While ${data.iterations || 3} times`
+        : data.loopMode === 'while_condition'
+        ? `While: ${data.condition || 'true'}`
+        : `While prompt: "${data.continuePrompt || 'Would you like to add another?'}"`,
   },
   {
     type: 'ForEachActivity',
     title: 'For Each',
     category: 'Logic',
     color: '#0891b2',
-    // itemKey/indexKey/startMessage/completeMessage are all real settable
-    // properties (ItemContextKey/IndexContextKey/StartMessage/
-    // CompleteMessage); collectionKey matches the real constructor's
-    // collectionContextKey -- but that constructor also requires a
-    // TopicFlowActivity childActivity, not yet representable.
-    defaultData: { collectionKey: 'Items', itemKey: 'item', indexKey: 'index', startMessage: '', completeMessage: '' },
+    defaultData: { collectionKey: 'Items', itemKey: 'item', indexKey: 'index', loopMode: 'for_each' },
     fields: [
       { key: 'collectionKey', label: 'Collection Key', kind: 'text' },
       { key: 'itemKey', label: 'Item Key', kind: 'text' },
       { key: 'indexKey', label: 'Index Key', kind: 'text' },
-      { key: 'startMessage', label: 'Start Message', kind: 'text' },
-      { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
     ],
-    ports: STANDARD_PORTS,
-    getSummary: (data) => `For each in ${data.collectionKey}`,
+    ports: repeatPorts,
+    getSummary: (data) => `For each ${data.itemKey || 'item'} in ${data.collectionKey || 'Items'}`,
   },
   {
     type: 'ParallelActivity',
     title: 'Parallel Branches',
     category: 'Logic',
     color: '#0891b2',
-    // continueOnError/completeMessage are real settable properties
-    // (ContinueOnError/CompleteMessage). branchCount has no basis in the
-    // real class -- ParallelActivity(string id, IEnumerable<TopicFlowActivity>
-    // activities) takes actual branches, not a count.
-    defaultData: { branchCount: '2', continueOnError: 'false', completeMessage: '' },
+    defaultData: { branchCount: '2', branches: 'Branch 1 | Branch 2', continueOnError: 'false', completeMessage: '', includeJoinPort: 'false' },
     fields: [
-      { key: 'branchCount', label: 'Branch Count (not yet transcribable)', kind: 'number' },
+      { key: 'branches', label: 'Branches (pipe-separated)', kind: 'text' },
+      { key: 'branchCount', label: 'Branch Count', kind: 'number' },
       { key: 'continueOnError', label: 'Continue On Error', kind: 'boolean' },
       { key: 'completeMessage', label: 'Complete Message', kind: 'text' },
     ],
-    ports: STANDARD_PORTS,
-    getSummary: (data) => `${data.branchCount} parallel branches`,
-  },
-  {
-    type: 'OnErrorActivity',
-    title: 'On Error',
-    category: 'Exception Handling',
-    color: '#ef4444',
-    // Real signature: OnErrorActivity(string id, string message) -- errorMessage maps directly.
-    defaultData: { errorMessage: 'An unexpected error occurred.' },
-    fields: [{ key: 'errorMessage', label: 'Error Message', kind: 'textarea' }],
-    // Matches docs/activity-shapes.md exactly: no Exception port -- this
-    // activity IS the error handler, it doesn't escalate its own errors
-    // through a further Exception port.
-    ports: [MAIN_INPUT, MAIN_OUTPUT, CONTROL_OUTPUT],
-    getSummary: (data) => data.errorMessage || 'Handle error',
+    ports: parallelPorts,
+    getSummary: (data) => `${parseParallelBranchLabels(data.branches, data.branchCount).length} parallel branches`,
   },
   {
     type: 'FallbackActivity',
@@ -560,15 +615,8 @@ const DEFINITIONS: ActivityDefinition[] = [
   {
     type: 'SetVariableActivity',
     title: 'Set Variable',
-    category: 'Logic',
+    category: 'Variables & State',
     color: '#0d9488',
-    // Real constructor needs IConversationContext + ILogger (framework
-    // services, no literal JSON form -- generic-fallback transcription
-    // only, same gap as PromptActivity/QuickAnswerActivity).
-    // variableName/value/isGlobal are the real VariableName/Value/
-    // IsGlobal properties; validateNaming maps to the real
-    // ValidateGlobalNaming property (doc's shorter name kept for
-    // doc-parity).
     defaultData: { variableName: 'Global_Example', value: '', isGlobal: 'true', validateNaming: 'true' },
     fields: [
       { key: 'variableName', label: 'Variable Name', kind: 'text' },
@@ -577,50 +625,51 @@ const DEFINITIONS: ActivityDefinition[] = [
       { key: 'validateNaming', label: 'Validate Naming', kind: 'boolean' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Set ${data.variableName} = ${data.value}`,
+    getSummary: (data) => `Set ${data.variableName || 'Variable'} = ${data.value ?? ''}`,
   },
   {
     type: 'GlobalVariableActivity',
     title: 'Promote to Global',
-    category: 'Logic',
+    category: 'Variables & State',
     color: '#0d9488',
-    // docs/activity-shapes.md's promotionMode/sourceKey/globalKey have no
-    // basis in the real class at all -- verified by reading it. Its only
-    // real configurable behavior is ShouldPromoteToGlobal, a
-    // Func<string, object?, bool> predicate delegate with no literal JSON
-    // form, and its constructor also needs IConversationContext/ILogger.
-    // Kept for doc-parity; none of these fields drive real behavior yet.
     defaultData: { promotionMode: 'all', sourceKey: '', globalKey: 'Global_<Key>' },
     fields: [
-      { key: 'promotionMode', label: 'Promotion Mode (not yet transcribable)', kind: 'text' },
+      {
+        key: 'promotionMode',
+        label: 'Promotion Mode',
+        kind: 'select',
+        options: [
+          { value: 'all', label: 'All Context Variables' },
+          { value: 'specific', label: 'Specific Variable' },
+        ],
+      },
       { key: 'sourceKey', label: 'Source Key', kind: 'text' },
       { key: 'globalKey', label: 'Global Key', kind: 'text' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: () => 'Promote context keys to global scope',
+    getSummary: (data) =>
+      data.promotionMode === 'specific' || Boolean(data.sourceKey)
+        ? `Promote ${data.sourceKey || 'variable'} → ${data.globalKey && data.globalKey !== 'Global_<Key>' ? data.globalKey : (data.sourceKey ? (data.sourceKey.startsWith('Global_') ? data.sourceKey : `Global_${data.sourceKey}`) : 'Global_...')}`
+        : 'Promote all variables to global scope',
   },
   {
     type: 'DumpCtxActivity',
     title: 'Dump Context',
-    category: 'Logic',
+    category: 'Variables & State',
     color: '#0d9488',
-    // Real signature: DumpCtxActivity(string id, bool isDevelopment) --
-    // developmentMode maps directly. outputType has no basis in the real
-    // class (no matching property found) -- kept for doc-parity only.
     defaultData: { developmentMode: 'true', outputType: 'DumpCtx' },
     fields: [
       { key: 'developmentMode', label: 'Development Mode', kind: 'boolean' },
-      { key: 'outputType', label: 'Output Type (not yet transcribable)', kind: 'text' },
+      { key: 'outputType', label: 'Output Type', kind: 'text' },
     ],
     ports: STANDARD_PORTS,
-    getSummary: (data) => `Dump context (dev: ${data.developmentMode})`,
+    getSummary: (data) => `Dump context (${data.developmentMode !== 'false' ? 'Dev mode' : 'Silent'})`,
   },
   {
     type: 'ResetActivity',
     title: 'Reset Session',
-    category: 'Logic',
+    category: 'Variables & State',
     color: '#0d9488',
-    // Real signature: ResetActivity(string id, string message) -- resetMessage maps directly.
     defaultData: { resetMessage: 'Session reset completed' },
     fields: [{ key: 'resetMessage', label: 'Reset Message', kind: 'textarea' }],
     ports: STANDARD_PORTS,
@@ -710,20 +759,6 @@ const DEFINITIONS: ActivityDefinition[] = [
     ports: STANDARD_PORTS,
     getSummary: (data) => data.message || 'Prompt attention',
   },
-  {
-    type: 'GreetingActivity',
-    title: 'Greeting',
-    category: 'Interaction',
-    color: '#f59e0b',
-    // Real signature: GreetingActivity(string id) -- no message parameter
-    // at all; the greeting text is hardcoded inline in RunActivity().
-    // docs/activity-shapes.md's `greeting` field has no basis in the real
-    // class -- kept for doc-parity only.
-    defaultData: { greeting: 'Welcome! How can I help you?' },
-    fields: [{ key: 'greeting', label: 'Greeting (not yet transcribable)', kind: 'textarea' }],
-    ports: STANDARD_PORTS,
-    getSummary: (data) => data.greeting || 'Greeting',
-  },
   // Phase 5.4: Events/Subroutines + Semantic/AI + Security categories
   // (docs/activity-shapes.md).
   {
@@ -800,6 +835,35 @@ const DEFINITIONS: ActivityDefinition[] = [
     getSummary: (data) => data.message || 'Multiple topics matched',
   },
   {
+    type: 'InvokeToolActivity',
+    title: 'Invoke Tool',
+    category: 'Tools',
+    color: '#0284c7',
+    // Real signature: InvokeToolActivity<TTool, TRequest, TResult>(
+    //   string id, string toolId, IToolExecutor executor,
+    //   Func<TopicWorkflowContext, TRequest> requestFactory,
+    //   Func<TopicWorkflowContext, ToolExecutionContext> executionContextFactory,
+    //   string resultContextKey, ILogger<TopicFlowActivity>? logger = null)
+    // toolId maps to the tool identifier, resultContextKey stores the ToolResult<TResult>.
+    // C# transcription scaffolds Create<ActivityId>Request and Create<ActivityId>ExecutionContext.
+    defaultData: {
+      toolId: 'LeadScoringTool',
+      toolType: 'LeadScoringTool',
+      requestType: 'LeadScoringRequest',
+      resultType: 'LeadScoringResult',
+      resultContextKey: 'lead_score_result',
+    },
+    fields: [
+      { key: 'toolId', label: 'Tool ID', kind: 'text' },
+      { key: 'toolType', label: 'Tool Type (C# class)', kind: 'text' },
+      { key: 'requestType', label: 'Request Type (C# class)', kind: 'text' },
+      { key: 'resultType', label: 'Result Type (C# class)', kind: 'text' },
+      { key: 'resultContextKey', label: 'Result Context Key', kind: 'text' },
+    ],
+    ports: STANDARD_PORTS,
+    getSummary: (data) => `Invoke tool ${data.toolId || data.toolType || 'unconfigured'}`,
+  },
+  {
     type: 'SemanticResponseActivity',
     title: 'Semantic Response',
     category: 'AI',
@@ -862,12 +926,102 @@ const BY_TYPE: Record<string, ActivityDefinition> = Object.fromEntries(
   DEFINITIONS.map((definition) => [definition.type, definition]),
 );
 
+export const ACTIVITY_ICONS: Record<string, string> = {
+  // Sequence
+  StartNode: '🚀',
+  SimpleActivity: '💬',
+  CompositeActivity: '📦',
+  DelayActivity: '⏱️',
+  EndActivity: '🛑',
+  // Selection
+  ConditionalActivity: '⚖️',
+  DecisionActivity: '🔀',
+  SwitchActivity: '🎛️',
+  // Iteration
+  RepeatActivity: '🔁',
+  ForEachActivity: '🔄',
+  // Concurrency
+  ParallelActivity: '🔀',
+  // Exception Handling
+  FallbackActivity: '🛟',
+  EscalateActivity: '📢',
+  // Variables & State
+  SetVariableActivity: '📝',
+  GlobalVariableActivity: '🌐',
+  DumpCtxActivity: '🗂️',
+  ResetActivity: '🔄',
+  // I/O
+  WaitForUserInputActivity: '⏳',
+  PromptActivity: '❓',
+  QuickAnswerActivity: '⚡',
+  AdaptiveCardActivity: '🪪',
+  ShowSuggestionsActivity: '💡',
+  InteractiveActivity: '👆',
+  ChatPromptAttentionActivity: '⚠️',
+  // Events & Subroutines
+  EventTriggerActivity: '⚡',
+  TriggerTopicActivity: '📞',
+  ExecuteTopicActivity: '▶️',
+  CompleteTopicActivity: '🏁',
+  MultipleTopicsMatchedActivity: '🔀',
+  InvokeToolActivity: '🛠️',
+  // Semantic/AI
+  SemanticResponseActivity: '🤖',
+  SemanticQueryActivity: '🔍',
+  // Security
+  SignInActivity: '🔐',
+};
+
+export const ACTIVITY_DESCRIPTIONS: Record<string, string> = {
+  StartNode: 'Conversation Entry Point. Execution begins here.',
+  SimpleActivity: 'Sends a text response or message to the conversation',
+  CompositeActivity: 'Executes a sequential pipeline of child activities',
+  DelayActivity: 'Pauses execution for a specified duration in milliseconds',
+  EndActivity: 'Terminates the current topic flow execution',
+  ConditionalActivity: 'Branches flow based on a boolean condition',
+  DecisionActivity: 'Multi-way branching based on decision rules',
+  SwitchActivity: 'Evaluates an expression and branches to matching cases',
+  RepeatActivity: 'Repeats a flow block while or until a condition is met',
+  ForEachActivity: 'Iterates sequentially over items in a collection',
+  ParallelActivity: 'Executes multiple branch flows concurrently',
+  FallbackActivity: 'Executes alternate logic when a primary activity fails',
+  EscalateActivity: 'Escalates execution or transfers to a human agent',
+  SetVariableActivity: 'Assigns values or expressions to context variables',
+  GlobalVariableActivity: 'Reads or writes global workspace variables',
+  DumpCtxActivity: 'Logs current context variables for debugging and diagnostics',
+  ResetActivity: 'Resets topic variables and clears conversation state',
+  WaitForUserInputActivity: 'Pauses and waits for the next incoming user message',
+  PromptActivity: 'Prompts user for input and waits for their response',
+  QuickAnswerActivity: 'Returns an instant automated answer from FAQ or knowledge',
+  AdaptiveCardActivity: 'Displays an interactive adaptive card form or UI card',
+  ShowSuggestionsActivity: 'Presents quick reply suggestion chips to the user',
+  InteractiveActivity: 'Renders an interactive custom UI widget',
+  ChatPromptAttentionActivity: 'Displays a high-priority banner or attention prompt',
+  EventTriggerActivity: 'Listens for and triggers on external system events',
+  TriggerTopicActivity: 'Executes another topic flow as an embedded subroutine',
+  ExecuteTopicActivity: 'Transfers execution control to another topic flow',
+  CompleteTopicActivity: 'Marks the topic flow as successfully completed',
+  MultipleTopicsMatchedActivity: 'Disambiguates when multiple topic intents match',
+  InvokeToolActivity: 'Invokes an external tool, function, or API plugin',
+  SemanticResponseActivity: 'Generates an AI response using semantic rules or LLM',
+  SemanticQueryActivity: 'Performs semantic vector search across knowledge base',
+  SignInActivity: 'Requests user authentication or OAuth credentials',
+};
+
+export function getActivityIcon(type: string): string {
+  return ACTIVITY_ICONS[type] ?? '⚙️';
+}
+
+export function getActivityDescription(type: string): string {
+  return ACTIVITY_DESCRIPTIONS[type] ?? getActivityDefinition(type)?.getSummary({}) ?? type;
+}
+
 export function getActivityDefinition(type: string): ActivityDefinition | undefined {
   return BY_TYPE[type];
 }
 
-export function getNodeSummary(type: string, data: Record<string, string>): string {
-  return getActivityDefinition(type)?.getSummary(data) ?? type;
+export function getNodeSummary(type: string, data?: Record<string, string>): string {
+  return getActivityDefinition(type)?.getSummary(data ?? {}) ?? type;
 }
 
 export function listSeededActivityDefinitions(): ActivityDefinition[] {

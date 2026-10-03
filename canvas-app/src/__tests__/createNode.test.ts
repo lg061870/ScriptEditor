@@ -38,16 +38,21 @@ describe('createDiagramNode port roles', () => {
   });
 
   it('falls back to an explicit generic main-role Input/Output pair for an unseeded type', () => {
-    // As of Phase 5.4, all 36 catalog shapes are seeded (registry/
-    // activityCatalog.ts's own list is fully covered by
-    // activityDefinitions.ts) -- InvokeToolActivity is the one type
-    // named in the roadmap (#37) that exists in neither yet, so it's the
-    // genuinely-unseeded example for this fallback path today.
-    const node = createDiagramNode('InvokeToolActivity', { x: 0, y: 0 });
+    const node = createDiagramNode('UnseededCustomActivity', { x: 0, y: 0 });
 
     expect(node.ports.map((p) => [p.name, p.direction, p.role])).toEqual([
       ['Input', 'input', 'main'],
       ['Output', 'output', 'main'],
+    ]);
+  });
+
+  it('gives InvokeToolActivity standard ports', () => {
+    const node = createDiagramNode('InvokeToolActivity', { x: 0, y: 0 });
+    expect(node.ports.map((p) => [p.name, p.direction, p.role])).toEqual([
+      ['Input', 'input', 'main'],
+      ['Output', 'output', 'main'],
+      ['Exception', 'output', 'exception'],
+      ['Control', 'output', 'control'],
     ]);
   });
 

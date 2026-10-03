@@ -78,4 +78,16 @@ describe('Phase 5.4: Events/Subroutines + Semantic/AI + Security parity', () => 
   it('SignInActivity matches the doc default (fully real, literal constructor)', () => {
     expect(getActivityDefinition('SignInActivity')!.defaultData).toEqual({ message: 'Please sign in to continue' });
   });
+
+  it('InvokeToolActivity is seeded with real ConversaCore tool properties', () => {
+    const def = getActivityDefinition('InvokeToolActivity')!;
+    expect(def).toBeDefined();
+    expect(def.defaultData).toEqual({
+      toolId: 'LeadScoringTool',
+      toolType: 'LeadScoringTool',
+      requestType: 'LeadScoringRequest',
+      resultType: 'LeadScoringResult',
+      resultContextKey: 'lead_score_result',
+    });
+  });
 });

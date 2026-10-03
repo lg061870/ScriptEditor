@@ -11,10 +11,22 @@ export const sampleDocument: DiagramDocument = {
   viewport: { panX: 24, panY: 18, zoom: 1 },
   nodes: [
     {
+      id: 'start',
+      type: 'StartNode',
+      name: 'Start',
+      x: 0,
+      y: 20,
+      data: {},
+      ports: [
+        { id: 'start-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
+      ],
+      context: { reads: [], writes: [] },
+    },
+    {
       id: 'n1',
       type: 'SimpleActivity',
       name: 'greet',
-      x: 0,
+      x: 100,
       y: 0,
       data: { message: 'Thanks for chatting! How can I help you today?' },
       // Matches SimpleActivity's real port shape (registry/activityDefinitions.ts,
@@ -22,28 +34,26 @@ export const sampleDocument: DiagramDocument = {
       ports: [
         { id: 'n1-in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
         { id: 'n1-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
-        { id: 'n1-exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'right' },
-        { id: 'n1-control', name: 'Control', direction: 'output', role: 'control', type: 'flow', position: 'right' },
+        { id: 'n1-exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'bottom' },
       ],
       context: { reads: [], writes: [] },
     },
     {
       id: 'n2',
       type: 'EndActivity',
-      x: 260,
-      y: 0,
+      x: 380,
+      y: 19,
       // Matches EndActivity's real port/data shape (registry/activityDefinitions.ts,
       // sourced from docs/activity-shapes.md) -- Phase 5.1.
       data: { endMessage: 'Done' },
       ports: [
         { id: 'n2-in', name: 'Input', direction: 'input', role: 'main', type: 'flow', position: 'left' },
-        { id: 'n2-out', name: 'Output', direction: 'output', role: 'main', type: 'flow', position: 'right' },
-        { id: 'n2-exc', name: 'Exception', direction: 'output', role: 'exception', type: 'flow', position: 'right' },
       ],
       context: { reads: [], writes: [] },
     },
   ],
   edges: [
+    { id: 'e0', from: { node: 'start', port: 'start-out' }, to: { node: 'n1', port: 'n1-in' } },
     { id: 'e1', from: { node: 'n1', port: 'n1-out' }, to: { node: 'n2', port: 'n2-in' } },
   ],
   cards: [],

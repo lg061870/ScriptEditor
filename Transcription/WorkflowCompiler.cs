@@ -9,7 +9,18 @@ namespace ScriptEditor.Transcription;
 
 public sealed record CompileDiagnostic(string Severity, string Message, int? Line);
 
-public sealed record CompileResult(bool Success, List<CompileDiagnostic> Diagnostics, string? GeneratedTypeName, string GeneratedCSharp);
+public sealed record CompileResult(bool Success, List<CompileDiagnostic> Diagnostics, string? GeneratedTypeName, string GeneratedCSharp, Type? CompiledType = null);
+
+public sealed record WorkspaceTopicInput(string Name, DiagramDocumentV2 Document);
+
+public sealed record WorkspaceCompileResult(
+    bool Success,
+    List<CompileDiagnostic> Diagnostics,
+    string? TargetTypeName,
+    string CombinedCSharp,
+    List<Type> CompiledTypes,
+    Type? TargetType
+);
 
 /// <summary>
 /// Phase 3.4: the dual-speed compilation lifecycle
@@ -36,24 +47,9 @@ public static class WorkflowCompiler
 
     public static CompileResult CompileAndLoad(DiagramDocumentV2 document, string className = "MainConversation")
     {
-        var csharp = JsonToCSharpTranscriber.Transcribe(document);
+        var csharp = JsonToCSharpTranscriber.Transcribe(document, className);
 
-        // Deliberately NOT wrapped in `namespace ConversaCore.TopicFlow`
-        // itself: TopicFlow (the base class) has the exact same simple
-        // name as the last segment of its own namespace, and referencing
-        // it unqualified from within a source block re-declaring that same
-        // namespace -- when the class exists only in a referenced
-        // assembly's metadata, not in this same syntax tree -- makes Roslyn
-        // bind the bare name to the namespace instead of the type
-        // ("'TopicFlow' is a namespace but is used like a type"), verified
-        // empirically. A neutral namespace + `using ConversaCore.TopicFlow;`
-        // resolves every bare name the same way without tripping that trap.
-        // `using System;`/`using Microsoft.Extensions.Logging;` are needed
-        // because, unlike Phase 3.1's scratch-file verification (which
-        // compiled inside ScriptEditor.csproj and inherited its SDK-level
-        // ImplicitUsings), this is a standalone CSharpSyntaxTree.ParseText
-        // compilation with no implicit usings of its own.
-        var wrapped = $"using System;\nusing Microsoft.Extensions.Logging;\nusing ConversaCore.TopicFlow;\n\nnamespace ScriptEditor.Generated\n{{\n{csharp}\n}}\n";
+        var wrapped = "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.ComponentModel.DataAnnotations;\nusing System.Text.Json.Serialization;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + csharp + "\n}\n";
 
         var syntaxTree = CSharpSyntaxTree.ParseText(wrapped);
         var references = GetReferences();
@@ -96,7 +92,81 @@ public static class WorkflowCompiler
             _previousContext = context;
         }
 
-        return new CompileResult(true, diagnostics, type?.FullName, csharp);
+        return new CompileResult(true, diagnostics, type?.FullName, csharp, type);
+    }
+
+    public static WorkspaceCompileResult CompileAndLoadWorkspace(
+        IEnumerable<WorkspaceTopicInput> topics,
+        string? targetTopicName = null)
+    {
+        var topicList = topics.ToList();
+        if (topicList.Count == 0)
+        {
+            return new WorkspaceCompileResult(false, [new CompileDiagnostic("Error", "No topics provided to compile", null)], null, string.Empty, [], null);
+        }
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var topic in topicList)
+        {
+            var cleanName = !string.IsNullOrWhiteSpace(topic.Name) ? topic.Name.Trim() : "MainConversation";
+            var csharp = JsonToCSharpTranscriber.Transcribe(topic.Document, cleanName);
+            sb.AppendLine($"// --- Topic: {cleanName} ---");
+            sb.AppendLine(csharp);
+            sb.AppendLine();
+        }
+
+        var combinedCSharp = sb.ToString();
+        var wrapped = "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + combinedCSharp + "\n}\n";
+
+        var syntaxTree = CSharpSyntaxTree.ParseText(wrapped);
+        var references = GetReferences();
+
+        var compilation = CSharpCompilation.Create(
+            assemblyName: $"GeneratedWorkspace_{Guid.NewGuid():N}",
+            syntaxTrees: [syntaxTree],
+            references: references,
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        using var peStream = new MemoryStream();
+        var emitResult = compilation.Emit(peStream);
+
+        var diagnostics = emitResult.Diagnostics
+            .Where(d => d.Severity >= DiagnosticSeverity.Warning)
+            .Select(d =>
+            {
+                var span = d.Location.GetLineSpan();
+                int? line = span.IsValid ? span.StartLinePosition.Line + 1 : null;
+                return new CompileDiagnostic(d.Severity.ToString(), d.GetMessage(), line);
+            })
+            .ToList();
+
+        if (!emitResult.Success)
+        {
+            return new WorkspaceCompileResult(false, diagnostics, null, combinedCSharp, [], null);
+        }
+
+        peStream.Seek(0, SeekOrigin.Begin);
+        var context = new CollectibleAssemblyLoadContext();
+        var assembly = context.LoadFromStream(peStream);
+
+        var compiledTypes = assembly.GetTypes()
+            .Where(t => typeof(TopicFlow).IsAssignableFrom(t) && !t.IsAbstract)
+            .ToList();
+
+        lock (UnloadLock)
+        {
+            _previousContext?.Unload();
+            _previousContext = context;
+        }
+
+        Type? targetType = null;
+        if (!string.IsNullOrWhiteSpace(targetTopicName))
+        {
+            targetType = compiledTypes.FirstOrDefault(t => string.Equals(t.Name, targetTopicName, StringComparison.OrdinalIgnoreCase));
+        }
+        targetType ??= compiledTypes.FirstOrDefault();
+
+        return new WorkspaceCompileResult(true, diagnostics, targetType?.FullName, combinedCSharp, compiledTypes, targetType);
     }
 
     // Nothing in ScriptEditor's own compiled IL references ConversaCore
@@ -133,6 +203,10 @@ public static class WorkflowCompiler
 
         EnsureLoaded(typeof(ConversaCore.TopicFlow.TopicFlow).Assembly);
         EnsureLoaded(typeof(Microsoft.Extensions.Logging.ILogger).Assembly);
+        EnsureLoaded(typeof(Microsoft.SemanticKernel.Kernel).Assembly);
+        EnsureLoaded(typeof(Microsoft.Extensions.Options.IOptions<>).Assembly);
+        EnsureLoaded(typeof(System.ComponentModel.DataAnnotations.RequiredAttribute).Assembly);
+        EnsureLoaded(typeof(System.Text.Json.Serialization.JsonPropertyNameAttribute).Assembly);
 
         return loaded
             .Select(a => (MetadataReference)MetadataReference.CreateFromFile(a.Location))

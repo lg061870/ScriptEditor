@@ -95,7 +95,9 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
   if (isBranching) {
     if (resumeValue === undefined) {
-      return { kind: 'wait', steps: [], waiting: 'choice', waitOptions: branchPorts.map((p) => p.name) };
+      const prompt = data.question || data.prompt || data.message;
+      const steps: ChatStep[] = prompt ? [{ kind: 'bot', text: prompt }] : [];
+      return { kind: 'wait', steps, waiting: 'choice', waitOptions: branchPorts.map((p) => p.name) };
     }
     return { kind: 'auto-branch', steps: [{ kind: 'user', text: resumeValue }], chosenPortName: resumeValue };
   }
@@ -109,9 +111,6 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
     case 'CompleteTopicActivity':
       return { kind: 'end', steps: [{ kind: 'bot', text: data.completionMessage || summary() }] };
-
-    case 'GreetingActivity':
-      return { kind: 'auto', steps: [{ kind: 'bot', text: data.greeting || summary() }] };
 
     case 'MultipleTopicsMatchedActivity':
       return { kind: 'auto', steps: [{ kind: 'bot', text: data.message || summary() }] };
@@ -130,8 +129,14 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
     case 'QuickAnswerActivity': {
       const options = (data.answers || '').split('|').map((s) => s.trim()).filter(Boolean);
+      const prompt = data.question;
       if (resumeValue === undefined) {
-        return { kind: 'wait', steps: [], waiting: 'choice', waitOptions: options.length > 0 ? options : ['Continue'] };
+        return {
+          kind: 'wait',
+          steps: prompt ? [{ kind: 'bot', text: prompt }] : [],
+          waiting: 'choice',
+          waitOptions: options.length > 0 ? options : ['Continue'],
+        };
       }
       return { kind: 'auto', steps: [{ kind: 'user', text: resumeValue }] };
     }
@@ -164,6 +169,39 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
         };
       }
       return { kind: 'auto', steps: [] };
+    }
+
+    case 'QuickAnswerActivity': {
+      const question = data.question || 'Please choose an option:';
+      const mode = data.optionsMode === 'variable' || (data.answersVariable && data.optionsMode !== 'static')
+        ? 'variable'
+        : 'static';
+      let choices: string[] = [];
+
+      if (mode === 'variable') {
+        const varName = data.answersVariable || 'choices';
+        choices = [`[Dynamic: ${varName} 1]`, `[Dynamic: ${varName} 2]`];
+      } else {
+        choices = (data.answers || 'Option A | Option B')
+          .split('|')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      if (choices.length === 0) choices = ['Option 1', 'Option 2'];
+
+      if (resumeValue === undefined) {
+        return {
+          kind: 'wait',
+          steps: [{ kind: 'bot', text: question }],
+          waiting: 'choice',
+          waitOptions: choices,
+        };
+      }
+
+      return {
+        kind: 'auto',
+        steps: [{ kind: 'user', text: resumeValue || choices[0] }],
+      };
     }
 
     case 'ChatPromptAttentionActivity': {
@@ -205,7 +243,6 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
     case 'DumpCtxActivity':
       return { kind: 'auto', steps: [{ kind: 'system', text: `🔧 ${summary()}` }] };
 
-    case 'OnErrorActivity':
     case 'FallbackActivity':
     case 'EscalateActivity':
     case 'CompositeActivity':

@@ -68,12 +68,21 @@ export function findBlockingObstacles(sourceX: number, sourceY: number, targetX:
   return obstacles.filter((rect) => segmentIntersectsRect(sourceX, sourceY, targetX, targetY, expandRect(rect, margin)));
 }
 
+export const OBSTACLE_MARGIN = 24;
+export const DETOUR_CORNER_RADIUS = 14;
+
 /** Picks a single Y that clears every blocking obstacle's full vertical
  * extent, on whichever side (above the topmost, or below the bottommost)
- * is the smaller deviation from the source/target midline. */
-export function chooseDetourY(sourceY: number, targetY: number, blocking: Rect[]): number {
-  const topY = Math.min(...blocking.map((r) => r.y));
-  const bottomY = Math.max(...blocking.map((r) => r.y + r.height));
+ * is the smaller deviation from the source/target midline, expanded by `margin`
+ * to guarantee clear breathing room rather than grazing or overlapping the border. */
+export function chooseDetourY(
+  sourceY: number,
+  targetY: number,
+  blocking: Rect[],
+  margin: number = OBSTACLE_MARGIN,
+): number {
+  const topY = Math.min(...blocking.map((r) => r.y)) - margin;
+  const bottomY = Math.max(...blocking.map((r) => r.y + r.height)) + margin;
   const midY = (sourceY + targetY) / 2;
   return Math.abs(midY - topY) <= Math.abs(midY - bottomY) ? topY : bottomY;
 }
@@ -112,9 +121,6 @@ export function roundedPolylinePath(points: Point[], radius: number): string {
   d += ` L ${last.x},${last.y}`;
   return d;
 }
-
-export const OBSTACLE_MARGIN = 16;
-export const DETOUR_CORNER_RADIUS = 14;
 
 /**
  * Phase 4.6: a backward edge (its target column left of its source
@@ -160,6 +166,42 @@ export function buildLoopPath(
       { x: sourceX, y: sourceY },
       { x: sourceX, y: channelY },
       { x: targetX, y: channelY },
+      { x: targetX, y: targetY },
+    ],
+    DETOUR_CORNER_RADIUS,
+  );
+}
+
+/**
+ * Builds an overhead loop path (over the top of all nodes) from source back to target,
+ * used for visual loop-back connectors on Repeat activities.
+ * It routes cleanly outward from the source port, rises well above the highest node,
+ * runs across horizontally, and drops down on the outer left side of the target node
+ * to enter the input port without intersecting any nodes or prompt text.
+ */
+export function buildTopLoopPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  allNodeTops: number[] = [],
+  laneIndex = 0,
+): string {
+  const highestTop = allNodeTops.length > 0 ? Math.min(...allNodeTops) : Math.min(sourceY, targetY);
+  // Ensure the overhead channel is safely 50px above the highest node / text
+  const channelY = Math.min(highestTop - 50, sourceY - 50, targetY - 50) - laneIndex * 18;
+  // Clear the right edge and '+' button of the source node
+  const exitX = sourceX + 35;
+  // Drop down comfortably to the left of the target node, leaving clear space
+  const entryX = targetX - 45;
+
+  return roundedPolylinePath(
+    [
+      { x: sourceX, y: sourceY },
+      { x: exitX, y: sourceY },
+      { x: exitX, y: channelY },
+      { x: entryX, y: channelY },
+      { x: entryX, y: targetY },
       { x: targetX, y: targetY },
     ],
     DETOUR_CORNER_RADIUS,

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { portHandleStyle, edgeLineStyle, computePortStackPositions, portStackOffsetStyle } from '../rendering/portStyle';
+import {
+  portHandleStyle,
+  edgeLineStyle,
+  computePortStackPositions,
+  portStackOffsetStyle,
+  calculateNodeDimensions,
+  BASE_NODE_WIDTH,
+  BASE_NODE_HEIGHT,
+  PORT_PITCH,
+} from '../rendering/portStyle';
 
 /**
  * Phase 4.2's acceptance criteria, verbatim: main = solid circle/solid
@@ -128,3 +137,103 @@ describe('portStackOffsetStyle', () => {
     expect(portStackOffsetStyle('right', 0, 3).transform).toBeUndefined();
   });
 });
+
+describe('calculateNodeDimensions', () => {
+  it('returns base dimensions for nodes with 0 or 1 port per side', () => {
+    expect(calculateNodeDimensions([])).toEqual({ width: BASE_NODE_WIDTH, height: BASE_NODE_HEIGHT });
+    expect(
+      calculateNodeDimensions([
+        { position: 'left', role: 'main' },
+        { position: 'right', role: 'main' },
+      ]),
+    ).toEqual({ width: 220, height: 54 });
+  });
+
+  it('ignores control ports so they do not artificially expand the shape', () => {
+    expect(
+      calculateNodeDimensions([
+        { position: 'left', role: 'main' },
+        { position: 'right', role: 'main' },
+        { position: 'right', role: 'control' },
+        { position: 'right', role: 'control' },
+      ]),
+    ).toEqual({ width: 220, height: 54 });
+  });
+
+  it('expands height for 2 ports on right (pitch = 28px)', () => {
+    const dims = calculateNodeDimensions([
+      { position: 'left', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+    ]);
+    expect(dims.height).toBe((2 + 1) * PORT_PITCH); // 84px
+    expect(dims.width).toBe(220);
+  });
+
+  it('expands height for 3 ports on right (the Branch to Topic case)', () => {
+    const dims = calculateNodeDimensions([
+      { position: 'left', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'bottom', role: 'exception' },
+    ]);
+    expect(dims.height).toBe((3 + 1) * PORT_PITCH); // 112px
+    expect(dims.width).toBe(220);
+  });
+
+  it('expands height for 4 ports on right', () => {
+    const dims = calculateNodeDimensions([
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+    ]);
+    expect(dims.height).toBe((4 + 1) * PORT_PITCH); // 140px
+  });
+
+  it('uses the maximum port count between left and right sides', () => {
+    const dims = calculateNodeDimensions([
+      { position: 'left', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+      { position: 'right', role: 'main' },
+    ]);
+    expect(dims.height).toBe(112);
+  });
+
+  it('respects explicit dimensions when they are larger than minimum required', () => {
+    const dims = calculateNodeDimensions(
+      [
+        { position: 'right', role: 'main' },
+        { position: 'right', role: 'main' },
+        { position: 'right', role: 'main' },
+      ],
+      300,
+      160,
+    );
+    expect(dims.width).toBe(300);
+    expect(dims.height).toBe(160);
+  });
+
+  it('does not allow explicit height smaller than required height to shrink the node', () => {
+    const dims = calculateNodeDimensions(
+      [
+        { position: 'right', role: 'main' },
+        { position: 'right', role: 'main' },
+        { position: 'right', role: 'main' },
+      ],
+      150,
+      50,
+    );
+    expect(dims.height).toBe(112);
+    expect(dims.width).toBe(220);
+  });
+
+  it('expands width if horizontal ports exceed standard width', () => {
+    const ports = Array.from({ length: 8 }, () => ({ position: 'bottom' as const, role: 'main' as const }));
+    const dims = calculateNodeDimensions(ports);
+    expect(dims.width).toBe((8 + 1) * PORT_PITCH); // 252px
+  });
+});
+

@@ -1,316 +1,197 @@
-# ScriptEditor: As-Is Architecture & System Documentation
+﻿# ScriptEditor: As-Is Architecture & System Documentation (Shipped Baseline)
 
-**Status:** Current Baseline (As-Is)  
+**Status:** Shipped Baseline (React Flow + Roslyn .NET 9 API)  
 **Date:** September 2026  
-**Document Purpose:** Baseline technical documentation of the experimental `ScriptEditor` implementation to facilitate gap analysis, refactoring, and transition to the target n8n-style agentic workflow architecture.
+**Document Purpose:** Authoritative baseline technical documentation of the shipped `ScriptEditor` system, superseding the legacy experimental Blazor/vanilla JS prototype.
 
 ---
 
-## 1. Executive Summary & Vision
+## 1. Executive Summary & Architecture Overview
 
-### 1.1 Original Mission
-The goal of `ScriptEditor` is to provide a visual diagramming and authoring environment for designing conversational topics and agentic workflows that execute on the **ConversaCore** conversational AI framework.
+`ScriptEditor` is a visual workflow designer and bi-directional code authoring studio for conversational topics and agentic workflows targeting the **ConversaCore** conversational AI framework (.NET 9).
 
-### 1.2 The As-Is Reality
-The current codebase was developed as an experimental prototype. While it contains valuable foundational ideas—specifically representing conversational flows through a declarative JSON graph—it has accumulated severe architectural compromises:
-* **Brittle Canvas Implementation:** The diagram canvas relies on a massive (~2,100 line) custom vanilla JavaScript DOM and SVG renderer with manual coordinate calculation, DOM-based node management, and Dagre layout integration.
-* **Duplicated Codebase Debt:** Approximately 40 activity C# classes were copied directly from `ConversaCore` into the `Activities/` folder, requiring MSBuild exclusions to avoid collision with the referenced library.
-* **Absence of Code Transcription:** The C# code generation/transcription engine is not implemented; workflows currently exist solely in JSON or browser `localStorage`.
-* **Clunky Inspector UX:** Node configuration relies on editing raw JSON strings inside textareas in a sidebar rather than structured, activity-aware configuration forms.
+The system replaces the legacy vanilla JavaScript DOM canvas (`editor.js`) and monolithic Blazor page (`Home.razor`) with a modern, decoupled architecture:
+1. **Standalone React Flow Frontend (`canvas-app/`):** Built with React 19, TypeScript, Vite, `@xyflow/react`, Zustand, and Monaco Editor. Delivers an n8n-style workflow experience with categorized palettes, contextual node inspection, obstacle-avoiding edge routing, dynamic branching ports, and a live chat preview simulator.
+2. **Roslyn .NET 9 Transcription Backend (`ScriptEditor/`):** ASP.NET Core minimal API providing bi-directional JSON ↔ C# transcription (`/api/transcribe/json-to-csharp`, `/api/transcribe/csharp-to-json`), on-demand Roslyn `CSharpCompilation.Emit` + `AssemblyLoadContext` verification (`/api/transcribe/run`), and static hosting of the production canvas bundle at `/canvas`.
+3. **JSON Document as Single Source of Truth (SSOT):** Both the visual canvas and Monaco C# code view are passive projections of a unified JSON document (`DiagramDocumentV2` / `diagram.ts`). Cross-surface mutations carry explicit origin tokens (`Canvas`, `CodeEditor`, `Inspector`) to prevent cyclic feedback loops.
 
-### 1.3 Target Architecture Principles
-1. **JSON is the Single Source of Truth:** Any diagram change must mutate the JSON model first; the canvas merely renders a view of that JSON.
-2. **Bi-Directional Code ↔ JSON Sync:** Code is transcribed from the JSON structure, and changes in code parse back into JSON, protected against circular updates, deadlocks, and infinite event loops.
-3. **No Local Activity Source Files:** `ScriptEditor` must not duplicate framework activity classes; it must reflectively discover activity definitions, parameters, and metadata directly from the referenced `ConversaCore` assembly.
-4. **n8n-Style Workflow Experience:** Clean canvas ergonomics with an n8n-inspired visual aesthetic, intuitive port connections, and a dedicated, schema-driven node configuration side-panel.
+```mermaid
+flowchart LR
+    subgraph Frontend [canvas-app: React 19 + React Flow]
+        Palette[37-Shape Palette]
+        Canvas[React Flow Graph Canvas]
+        Inspector[Contextual Inspector]
+        CodeView[Monaco C# Code Panel]
+        ChatSim[Live Chat Preview Pane]
+    end
+
+    subgraph Store [Zustand SSOT Store]
+        JSON[DiagramDocument State]
+    end
+
+    subgraph Backend [ScriptEditor: ASP.NET Core Minimal API]
+        Transcriber[JsonToCSharpTranscriber]
+        Parser[CSharpToJsonParser]
+        Compiler[WorkflowCompiler]
+    end
+
+    subgraph Framework [ConversaCore Engine]
+        Activities[37 TopicFlow Activities]
+    end
+
+    Palette -->|Add Node| Store
+    Canvas <-->|Projection & Move/Wire| Store
+    Inspector <-->|Update Data| Store
+    Store <-->|Debounced Sync| Backend
+    Backend -->|Roslyn CodeGen & Emit| Framework
+    Store --> CodeView
+    Canvas --> ChatSim
+```
 
 ---
 
-## 2. Solution Structure & Dependencies
+## 2. Solution Structure & Layout
 
-### 2.1 Solution Layout
 ```text
 ScriptEditor/
-├── Activities/                  # Technical debt: duplicated ConversaCore activities
-│   ├── Base/                    # Core workflow base classes (excluded via csproj)
-│   ├── AdaptiveCardActivity.*   # Form/Card activity implementation
-│   ├── ChoiceActivity.cs
-│   ├── CompleteTopicActivity.cs
-│   ├── ConditionalActivity.cs
-│   ├── PromptActivity.cs
-│   └── ... (approx. 40 activity files)
-├── Components/
-│   ├── Layout/                  # MainLayout, NavMenu
-│   └── Pages/
-│       ├── Home.razor           # Primary Blazor shell, inspector, script bar (~1,400 LOC)
-│       ├── Home.Adaptive.cs     # Partial: Adaptive Cards/Models serialization
-│       ├── Home.DndDiagnostics.cs # Partial: Drag-and-drop diagnostic instrumentation
-│       ├── Home.TargetProject.cs# Partial: Scans disk to verify ConversaCore wiring
-│       └── ...
+├── Program.cs                   # ASP.NET Core minimal API & static /canvas SPA hosting
+├── ScriptEditor.csproj          # .NET 9 Web SDK referencing ConversaCore.csproj
+├── ScriptEditor.sln             # Solution containing ScriptEditor & ScriptEditor.Tests
+│
+├── Endpoints/
+│   ├── TranscriptionEndpoints.cs# /api/transcribe/json-to-csharp, /csharp-to-json, /run
+│   └── WorkflowEndpoints.cs     # /api/workflow/run
+│
+├── Transcription/
+│   ├── JsonToCSharpTranscriber.cs # JSON -> compilable C# TopicFlow with scaffolding
+│   ├── CSharpToJsonParser.cs      # Roslyn AST parser mapping C# -> JSON DiagramDocument
+│   └── WorkflowCompiler.cs        # In-memory CSharpCompilation.Emit & ALC validation
+│
 ├── Models/
-│   ├── DiagramDocument.cs       # Core document, node, edge, port, and card DTOs
-│   ├── DiagramValidation.cs     # Validation rules for diagram graph integrity
-│   └── EditorWorkspace.cs       # Multi-script workspace and localStorage cloning
-├── Properties/                  # launchSettings.json
-├── wwwroot/
-│   ├── editor.js                # Monolithic JS canvas controller (~2,100 LOC)
-│   ├── layoutEngine.js          # Dagre layout integration
-│   ├── editor/
-│   │   ├── core/                # normalize.js, ports.js, types.js
-│   │   └── rendering/           # renderNode.js, renderEdges.js, renderPorts.js, renderAdaptiveNodes.js
-│   └── ...
-├── Program.cs                   # ASP.NET Core 9 minimal startup (InteractiveServerComponents)
-└── ScriptEditor.csproj          # Project definition and compile hacks
+│   ├── Schema/
+│   │   └── DiagramSchemaV2.cs   # C# DTOs: DiagramDocumentV2, DiagramNodeV2, DiagramPortV2, DiagramEdgeV2
+│   ├── DiagramDocument.cs       # Legacy DTOs preserved for backward compatibility
+│   └── DiagramValidation.cs     # Graph integrity validation rules
+│
+├── Components/
+│   ├── App.razor                # Clean Blazor HTML host (editor.js scripts removed)
+│   ├── Routes.razor             # Application routing
+│   ├── Layout/
+│   │   └── MainLayout.razor     # Full-viewport layout container
+│   └── Pages/
+│       └── Home.razor           # Modern canvas host: embeds /canvas/index.html or dev launcher
+│
+├── canvas-app/                  # Modern React Flow frontend application
+│   ├── package.json             # React 19, @xyflow/react, Zustand, Monaco, Vite, Vitest
+│   ├── vite.config.ts           # Vite + Vitest + jsdom configuration
+│   ├── src/
+│   │   ├── App.tsx              # Main canvas layout with quiet top-level chrome header
+│   │   ├── store/               # Zustand SSOT store with origin token enforcement
+│   │   ├── schema/diagram.ts    # TypeScript interfaces matching DiagramSchemaV2
+│   │   ├── registry/
+│   │   │   ├── activityCatalog.ts    # 10 categories, 37 activity shape descriptors
+│   │   │   └── activityDefinitions.ts# Port roles, summaries, parameter forms
+│   │   ├── components/
+│   │   │   ├── DiagramNode.tsx       # Collapsed n8n-style node with auto-stacked ports
+│   │   │   ├── RoleEdge.tsx          # Obstacle-aware / loop-lane edge renderer
+│   │   │   ├── Palette.tsx           # Category-grouped activity palette + '+' connect mode
+│   │   │   ├── Inspector.tsx         # Node parameter configuration drawer & IsRequired toggle
+│   │   │   ├── CodePanel.tsx         # Monaco editor with debounced bi-directional sync
+│   │   │   └── ChatPreviewPanel.tsx  # Live conversation execution simulator & Roslyn check
+│   │   ├── execution/simulateFlow.ts # Edge-graph simulation engine
+│   │   └── __tests__/           # 12 test suites, 113 Vitest tests
+│   └── dist/                    # Production build bundled by Vite
+│
+├── ScriptEditor.Tests/          # Backend xUnit test suite (13 passing tests)
+│   ├── RoundTripTests.cs        # Full JSON -> C# -> JSON round-trip verification
+│   └── WorkflowCompilerTests.cs # Roslyn code emission, scaffolding, and compile tests
+│
+└── archive/
+    └── legacy-canvas/           # Archived obsolete files (Home.razor ~1,400 LOC, editor.js ~2,100 LOC)
 ```
-
-### 2.2 Project Dependencies & Compiler Hacks
-In `ScriptEditor.csproj`:
-```xml
-<Project Sdk="Microsoft.NET.Sdk.Web">
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\InsuranceSemanticV2\ConversaCore\ConversaCore.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="Activities\Base\**\*.cs" />
-    <Compile Include="Activities\Base\Interfaces\ITopicTriggeredActivity.cs" />
-    <Compile Include="Activities\Base\Interfaces\ICustomEventTriggeredActivity.cs" />
-  </ItemGroup>
-</Project>
-```
-* **Critical Finding:** The project references `ConversaCore.csproj` from the sibling repo `InsuranceSemanticV2`, yet also includes ~40 activity `.cs` files in `Activities/`.
-* Because `ConversaCore` already defines these types, the compiler produced collisions, leading to the `<Compile Remove="Activities\Base\**\*.cs" />` workaround.
 
 ---
 
-## 3. Data Model & JSON Specification
+## 3. Data Model & Schema (V2 SSOT)
 
-The data contract is defined in `Models/DiagramDocument.cs`. It serves as the serialized document format:
+The authoritative schema is defined symmetrically in `Models/Schema/DiagramSchemaV2.cs` (C#) and `canvas-app/src/schema/diagram.ts` (TypeScript):
 
-```mermaid
-classDiagram
-    class EditorWorkspace {
-        +List~WorkspaceScript~ Scripts
-        +string ActiveScriptId
-        +string TargetProjectFolder
-    }
-    class WorkspaceScript {
-        +string Id
-        +DiagramDocument Document
-    }
-    class DiagramDocument {
-        +DiagramViewport Viewport
-        +List~DiagramNode~ Nodes
-        +List~DiagramEdge~ Edges
-        +List~DiagramAdaptiveCardDefinition~ Cards
-        +List~DiagramAdaptiveModelDefinition~ Models
-    }
-    class DiagramNode {
-        +string Id
-        +string Type
-        +string Name
-        +bool Collapsed
-        +double X
-        +double Y
-        +double Width
-        +double Height
-        +Dictionary~string, string~ Data
-        +List~DiagramPort~ Ports
-        +DiagramContextUsage Context
-    }
-    class DiagramPort {
-        +string Id
-        +string Name
-        +string Direction
-        +string Type
-        +string Position
-    }
-    class DiagramEdge {
-        +string Id
-        +DiagramEndpoint From
-        +DiagramEndpoint To
-        +double LooseX
-        +double LooseY
-    }
-    class DiagramEndpoint {
-        +string Node
-        +string Port
-    }
-
-    EditorWorkspace --> WorkspaceScript
-    WorkspaceScript --> DiagramDocument
-    DiagramDocument --> DiagramNode
-    DiagramDocument --> DiagramEdge
-    DiagramNode --> DiagramPort
-    DiagramEdge --> DiagramEndpoint
-```
-
-### 3.1 JSON Schema Overview
-```json
-{
-  "viewport": {
-    "panX": 24.0,
-    "panY": 18.0,
-    "zoom": 1.0
-  },
-  "nodes": [
-    {
-      "id": "chat-input-1",
-      "type": "chat-input",
-      "name": "User Greeting",
-      "collapsed": false,
-      "x": 120.0,
-      "y": 80.0,
-      "width": 320.0,
-      "height": 260.0,
-      "data": {
-        "prompt": "Hello! How can I help you today?"
-      },
-      "ports": [
-        {
-          "id": "chat-input-1-out",
-          "name": "Output",
-          "direction": "output",
-          "type": "string",
-          "position": "right"
-        },
-        {
-          "id": "chat-input-1-exception-out",
-          "name": "Exception",
-          "direction": "output",
-          "type": "any",
-          "position": "custom-bottom-85"
-        }
-      ],
-      "context": {
-        "reads": [],
-        "writes": ["LastUserMessage"]
-      }
-    }
-  ],
-  "edges": [
-    {
-      "id": "edge-1",
-      "from": { "node": "chat-input-1", "port": "chat-input-1-out" },
-      "to": { "node": "simple-activity-2", "port": "simple-activity-2-in" }
-    }
-  ],
-  "cards": [],
-  "models": []
-}
-```
-
-### 3.2 Graph Validation Engine (`Models/DiagramValidation.cs`)
-A static `DiagramValidator` validates the graph in memory:
-* **Entry/Output Check:** Must have an entry node (`chat-input`) and an output node (`chat-output`).
-* **Port Id Collision:** Enforces uniqueness of port IDs across all nodes.
-* **Edge Validity:** Ensures source is `output`, target is `input`, and checks port type compatibility (`TypesCompatible`).
-* **Multi-Input Restriction:** Flags errors if a single input port receives more than one incoming edge.
-* **Dangling / Disconnected:** Flags disconnected nodes and unattached edges.
-* **Adaptive Card & Model Linkage:** Validates that nodes referencing `cardRef` and `modelRef` resolve against valid definitions in the `cards` and `models` arrays.
+### 3.1 Node & Port Contract
+* **`DiagramPortV2`**:
+  * `id`: Unique port identifier.
+  * `direction`: `"input"` | `"output"`.
+  * `type`: Type compatibility string (`"string"`, `"control"`, `"any"`, `"adaptive-card"`, etc.).
+  * `role`: First-class port role enum:
+    * `"main"`: Standard execution flow (solid circle handle, solid wire).
+    * `"exception"`: Error propagation (red solid circle handle, red dashed wire).
+    * `"control"`: Loop / branching control signals (solid square handle).
+    * `"aux-config"`: Auxiliary configuration (diamond handle, dashed wire, e.g. card/model).
+* **`DiagramNodeV2`**:
+  * `id`: Unique node identifier (e.g. `"LeadDetails"`).
+  * `type`: Activity type string corresponding to ConversaCore activity classes (e.g. `"AdaptiveCardActivity"`, `"InvokeToolActivity"`).
+  * `name`: Friendly node title displayed in the header.
+  * `x`, `y`: Absolute canvas coordinates.
+  * `data`: Key-value dictionary of activity parameters (prompts, delays, keys, flags, required toggles).
+  * `ports`: Array of `DiagramPortV2` handles auto-stacked on the node boundary.
+* **`DiagramEdgeV2`**:
+  * `id`: Unique edge identifier.
+  * `source`: Node ID.
+  * `sourcePort`: Output port ID.
+  * `target`: Destination node ID.
+  * `targetPort`: Destination input port ID.
+  * `role`: Inherited from source port (`"main"`, `"exception"`, `"control"`, `"aux-config"`).
 
 ---
 
-## 4. Current Diagramming Canvas & Rendering Architecture
+## 4. Code Generation & Roslyn Scaffolding Engine
 
-### 4.1 DOM & SVG Stacking
-The canvas in `Home.razor` is hosted within a viewport scroller:
-```html
-<section class="canvas-scroller">
-    <div class="canvas-stage" data-editor-stage>
-        <div class="canvas-content" data-editor-content>
-            <div class="canvas-surface">
-                <svg class="connections" viewBox="0 0 6000 6000" preserveAspectRatio="none"></svg>
-                <div class="nodes-layer" data-nodes-layer></div>
-            </div>
-        </div>
-    </div>
-</section>
-```
-* **Connections Layer (`<svg class="connections">`):** Bezier curves (`<path>`) representing edges are drawn across an enormous `6000x6000` coordinate space.
-* **Nodes Layer (`.nodes-layer`):** HTML `<div>` cards styled with CSS are absolutely positioned via `transform: translate(x, y)` or `left/top` CSS styles.
+`Transcription/JsonToCSharpTranscriber.cs` transforms the visual JSON graph into an idiomatic, strongly-typed C# class inheriting from `ConversaCore.TopicFlow.Core.TopicFlow`:
 
-### 4.2 The Monolithic JavaScript Layer (`editor.js`)
-The canvas behavior is orchestrated by `wwwroot/editor.js` and modular helpers in `wwwroot/editor/`:
-1. **Coordinate & Port Normalization (`normalize.js`, `ports.js`):** Automatically injects default ports (including synthetic `Exception` ports) if they do not exist on the node.
-2. **Node Rendering (`renderNode.js`, `renderAdaptiveNodes.js`):** Dynamically constructs DOM elements with titles, action icons, collapsible bodies, and port anchors.
-3. **Edge Rendering (`renderEdges.js`):** Calculates cubic Bezier paths between source and target port bounding rects.
-4. **Layout Engine (`layoutEngine.js`):** Wraps Dagre to compute automatic horizontal or vertical directed-graph layouts.
-5. **Drag-and-Drop Diagnostic Overhead:** Because HTML5 drag-and-drop combined with Blazor InteractiveServer had reliability issues, extensive diagnostic counters (`_dndDebug`, `PointerDownCount`, `InitElapsedMs`) and early-event listeners were injected directly into `editor.js` and `Home.DndDiagnostics.cs`.
+### 4.1 Delegate & Tool Scaffolding Pattern
+For activities requiring domain logic, lambdas, or external tools (such as `PublishHostNotificationActivity<TPayload>` and `InvokeToolActivity<TTool, TRequest, TResult>`), the transcriber generates named private helper methods on the topic class rather than leaving broken stubs:
+* Generates XML doc comments explaining parameter extraction from `TopicWorkflowContext`.
+* Provides explicit guidance and throws a descriptive `NotImplementedException("Provide payload/request logic for <ActivityId>")`.
+* Prevents silent null failures or compiler errors while clearly signposting where the developer implements custom domain payloads.
 
-### 4.3 Current State Synchronization & Synchronization Problems
-```mermaid
-sequenceDiagram
-    participant User as User Canvas
-    participant JS as editor.js
-    participant Blazor as Home.razor
-    participant Doc as ActiveDocument (JSON)
+### 4.2 Adaptive Cards & Model Context Auto-Dumping
+* Emits `AdaptiveCardActivity<TCard, TModel>` with `cardFactory: c => c.Create()` and optional object initializer:
+  ```csharp
+  Add(new AdaptiveCardActivity<ContactInfoCard, ContactInfoModel>(
+      "ContactInfo",
+      Context,
+      cardFactory: c => c.Create(),
+      modelContextKey: "submission_data")
+  {
+      IsRequired = true
+  });
+  ```
+* Scaffolds `TModel` inheriting from `ConversaCore.Cards.BaseCardModel`.
+* Documents that `BaseCardModel.UpdateContext(Context)` automatically dumps model properties into `TopicWorkflowContext` by matching field names.
 
-    User->>JS: Drag Node / Connect Edge
-    JS->>JS: Mutate internal DOM/Graph
-    JS->>Blazor: OnCanvasDocumentChanged(documentJson) [JSInvokable]
-    Blazor->>Doc: Parse JSON to C# DiagramDocument
-    Blazor->>Blazor: RevalidateActiveScript()
-    Blazor-->>User: Re-render UI (StateHasChanged)
-```
-* **The Problem:** The canvas currently acts as its own state store. The user moves a node in JS, JS updates its DOM, and JS serializes the entire document back to Blazor via `OnCanvasDocumentChanged`.
-* When the user types into the JSON textarea in the sidebar, Blazor parses it and pushes it *back* to JS via `scriptEditor.applyDocument`.
-* **Fragility:** This two-way push model easily causes desynchronization, lost focus, cursor jumps in the text editor, and circular update races.
+### 4.3 Bi-Directional Roslyn AST Parsing
+`Transcription/CSharpToJsonParser.cs` parses generated or developer-edited C# `TopicFlow` classes back into the JSON graph:
+* Recognizes generic activities (`AdaptiveCardActivity<TCard, TModel>`, `PublishHostNotificationActivity<T>`, `InvokeToolActivity<TTool, TRequest, TResult>`).
+* Extracts `IsRequired = true/false` object initializers and maps them back to node `data["required"]`.
+* Maps tool properties, context keys, and notification channels.
 
 ---
 
-## 5. Current Inspector & Workspace Features
+## 5. Verification & Test Coverage
 
-### 5.1 Multi-Script Tabs
-* `EditorWorkspace` maintains a list of `WorkspaceScript` items, allowing tab switching between different flows (e.g. `MainConversation`, `Script2`).
-* Persisted to browser `localStorage` under the key `scriptEditor.workspace`.
+The system is continuously verified across both frontend and backend suites:
 
-### 5.2 Node Inspector Panel
-Located on the right sidebar:
-* **Selected Node:** Displays and edits `Id`, `Type`, `Name`, `Collapsed`, comma-separated `Reads`/`Writes` context variables.
-* **Raw JSON Textareas:** Data configuration (`_selectedNodeDataJsonDraft`) and Ports (`_selectedNodePortsJsonDraft`) are edited as raw JSON text blocks with manual "Apply" buttons.
-* **Adaptive Card Designer:** Separate textareas for raw Adaptive Card and Model JSON definitions.
-* **Context Flow Analysis:** Aggregates variable reads and writes across the flow, allowing the user to click a variable and highlight its readers and writers on the canvas.
-
-### 5.3 Target Project Verification (`Home.TargetProject.cs`)
-* An interactive scanner where the user inputs a project folder on disk.
-* Scans for `.csproj` files, checks whether the target is an ASP.NET Core Web project, and verifies whether it has a valid `ProjectReference` or `PackageReference` pointing to `ConversaCore`.
-
----
-
-## 6. Code Generation (C# Transcription) Status
-
-### Current Implementation: **Completely Missing**
-* There is currently **no generator** converting `DiagramDocument` into a `TopicFlow` C# class.
-* There is currently **no parser** taking a C# `TopicFlow` class and converting it into a `DiagramDocument` JSON graph.
-* As a result, scripts authored in `ScriptEditor` cannot be exported, executed, or compiled into a working application without manually retyping them in C#.
-
----
-
-## 7. As-Is vs. To-Be Gap Analysis
-
-| Dimension | Current (As-Is) Implementation | Target (To-Be) Architecture | Gap / Action Required |
+| Test Suite | Framework | Scope | Status |
 | :--- | :--- | :--- | :--- |
-| **Source of Truth** | Split between JS DOM, Blazor component state, and raw textarea drafts. | **JSON is the exclusive Single Source of Truth.** All user actions dispatch pure JSON state mutations first. | Re-architect the state layer so canvas and code editors are passive views reacting to JSON state changes. |
-| **Sync Engine** | Reactive ad-hoc callbacks (`OnCanvasDocumentChanged` / `applyDocument`). Prone to loops. | **Synchronized Event Loop with Origin Tokens.** Explicit change origins (`Canvas`, `CodeEditor`, `Inspector`) prevent circular updates and deadlocks. | Implement a centralized document synchronization service with cycle detection and debounced dispatch. |
-| **Canvas Engine** | ~2,100 LOC custom vanilla JS DOM/SVG renderer + Dagre. Fragile drag-and-drop and port wiring. | **n8n-Style Workflow Canvas.** Modern node graph rendering (clean cards, smooth bezier splines, intuitive snapping, minimap, zoom-to-fit). | Completely replace the custom `editor.js` canvas with a modern, purpose-built workflow engine. |
-| **Node Configuration** | Raw JSON textareas in a cramped sidebar with manual "Apply" buttons. | **n8n-Style Node Configuration Panel / Modal.** Rich, schema-driven field editors (text fields, dropdowns, card builders, variable pickers). | Replace raw textareas with dynamically rendered form controls tailored to the active activity type. |
-| **Activity Definitions** | ~40 copied `.cs` files sitting in `Activities/` with compiler exclusion workarounds. | **Dynamic Library Discovery.** Zero copied activity files. Discovers activities, schemas, and ports via reflection from `ConversaCore.dll`. | Delete all files in `Activities/`. Implement a reflection/metadata extractor that parses `ConversaCore` activities. |
-| **Code Transcription** | None (100% missing). | **Bi-Directional C# Transcription Engine.** Generates clean `TopicFlow` partial classes from JSON; parses C# back to JSON using Roslyn syntax trees. | Build Roslyn-based parser/generator for `TopicFlow` and activity queues. |
-| **Adaptive Cards** | Standalone JSON array textareas in inspector. | Integrated visual card layout builder or Monaco JSON editor with live card preview. | Integrate structured card schema editing into the node configuration panel. |
+| `canvas-app/src/__tests__/` | Vitest / jsdom | 37 activity shapes, port rendering, obstacle routing, origin token loop suppression, chat preview simulation | **113 / 113 Passed** |
+| `ScriptEditor.Tests/` | xUnit / .NET 9 | Roslyn C# transcription, AST reverse parsing, scaffolding generation, compilation and load against ConversaCore | **13 / 13 Passed** |
+| Parity Audit | Markdown Checklist | Verified parity against `docs/PARITY_REGRESSION_CHECKLIST.md` | **100% Verified** |
 
 ---
 
-## 8. Recommended Next Steps
+## 6. Legacy Retirement Summary
 
-1. **Delete Dead Activity Code:** Remove the duplicated files in `Activities/` and clean up `ScriptEditor.csproj`.
-2. **Build the Reflection Catalog:** Create a service in `ScriptEditor` that inspects the referenced `ConversaCore` assembly, extracts all types derived from `TopicFlowActivity`, and generates their port and property schemas.
-3. **Decouple the Canvas from DOM State:** Formalize the JSON document mutation API in C# (e.g. `AddNode`, `RemoveNode`, `ConnectEdge`, `UpdateNodeData`).
-4. **Prototype the n8n-Style Canvas:** Select and integrate a modern canvas library (or lightweight SVG/HTML canvas component) and design the side-screen node editor.
-5. **Implement the Code Transcriber:** Build the Roslyn-based bidirectional converter between `DiagramDocument` and C# `TopicFlow`.
+The obsolete prototype implementation has been retired and preserved in `archive/legacy-canvas/`:
+* `Home.razor` (~1,400 LOC Blazor shell) and partials (`Home.Adaptive.cs`, `Home.DndDiagnostics.cs`, `Home.TargetProject.cs`).
+* `editor.js` (~2,100 LOC vanilla JS DOM/SVG canvas engine).
+* `layoutEngine.js` and `editor/` subdirectories.
+* `Components/App.razor` script references and JSInterop deferral shims completely removed.

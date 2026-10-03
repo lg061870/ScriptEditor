@@ -52,6 +52,7 @@ export interface DiagramNode {
   id: string;
   type: string;
   name?: string;
+  customName?: string;
   collapsed?: boolean;
   x: number;
   y: number;
@@ -134,4 +135,18 @@ export interface DiagramDocument {
   edges: DiagramEdge[];
   cards: DiagramAdaptiveCardDefinition[];
   models: DiagramAdaptiveModelDefinition[];
+  freeFloatingNodeIds?: string[];
+}
+
+export interface TopicDocument {
+  id: string;              // e.g. "MainConversation", "QuoteGenerationTopic"
+  name: string;            // Display title e.g. "MainConversation"
+  isInitial: boolean;      // Startup / entry-point topic flag
+  isDirty?: boolean;       // Unsaved modifications indicator
+  document: DiagramDocument;
+}
+
+export interface WorkspaceDocument {
+  topics: TopicDocument[];
+  activeTopicId: string;
 }

@@ -9,10 +9,11 @@ import { getActivityDefinition } from '../registry/activityDefinitions';
  * exactly.
  */
 describe('Phase 5.2: Iteration + Concurrency + Exception Handling parity', () => {
-  it('all 6 types are seeded', () => {
-    for (const type of ['RepeatActivity', 'ForEachActivity', 'ParallelActivity', 'OnErrorActivity', 'FallbackActivity', 'EscalateActivity']) {
+  it('all 5 types are seeded (OnErrorActivity removed in favor of per-activity exit ramps)', () => {
+    for (const type of ['RepeatActivity', 'ForEachActivity', 'ParallelActivity', 'FallbackActivity', 'EscalateActivity']) {
       expect(getActivityDefinition(type), `${type} should be seeded`).toBeDefined();
     }
+    expect(getActivityDefinition('OnErrorActivity')).toBeUndefined();
   });
 
   it('RepeatActivity matches the doc defaults', () => {
@@ -20,6 +21,7 @@ describe('Phase 5.2: Iteration + Concurrency + Exception Handling parity', () =>
       loopMode: 'while predicate',
       collectionKey: 'BasicsLearningLoop_Collection',
       continuePrompt: 'custom predicate controls continuation',
+      iterationVariable: 'count',
     });
   });
 
@@ -35,19 +37,16 @@ describe('Phase 5.2: Iteration + Concurrency + Exception Handling parity', () =>
     expect(node.ports.map((p) => p.name)).toEqual(['Input', 'Output', 'Exception', 'Control']);
   });
 
-  it('ParallelActivity matches the doc defaults', () => {
+  it('ParallelActivity matches the defaults and has branch ports', () => {
     expect(getActivityDefinition('ParallelActivity')!.defaultData).toEqual({
       branchCount: '2',
+      branches: 'Branch 1 | Branch 2',
       continueOnError: 'false',
       completeMessage: '',
+      includeJoinPort: 'false',
     });
-  });
-
-  it('OnErrorActivity matches the doc default and has NO Exception port', () => {
-    expect(getActivityDefinition('OnErrorActivity')!.defaultData).toEqual({ errorMessage: 'An unexpected error occurred.' });
-    const node = createDiagramNode('OnErrorActivity', { x: 0, y: 0 });
-    expect(node.ports.map((p) => p.name)).toEqual(['Input', 'Output', 'Control']);
-    expect(node.ports.some((p) => p.role === 'exception')).toBe(false);
+    const node = createDiagramNode('ParallelActivity', { x: 0, y: 0 });
+    expect(node.ports.map((p) => p.name)).toEqual(['Input', 'Branch 1', 'Branch 2', 'Exception']);
   });
 
   it('FallbackActivity matches the doc default (fallbackFlagKey excluded -- not configurable in the real class)', () => {

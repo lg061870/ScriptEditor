@@ -33,12 +33,17 @@ const HANDLE_SIZE = 9;
  * (two aux-config handles landed exactly on top of each other instead of
  * each centered on its own side). `clip-path` achieves the diamond shape
  * without touching `transform` at all. */
-export function portHandleStyle(role: DiagramPortRole): CSSProperties {
+export function portHandleStyle(role: DiagramPortRole, isConnected: boolean = true): CSSProperties {
   const base: CSSProperties = {
     width: HANDLE_SIZE,
     height: HANDLE_SIZE,
     minWidth: HANDLE_SIZE,
     minHeight: HANDLE_SIZE,
+    boxSizing: 'border-box',
+    backgroundColor: isConnected ? (role === 'exception' ? '#ef4444' : '#1e1b4b') : '#ffffff',
+    border: isConnected
+      ? (role === 'exception' ? '1px solid #ffffff' : 'none')
+      : `1.5px solid ${role === 'exception' ? '#ef4444' : '#1e1b4b'}`,
   };
 
   switch (role) {
@@ -47,6 +52,7 @@ export function portHandleStyle(role: DiagramPortRole): CSSProperties {
     case 'aux-config':
       return { ...base, borderRadius: 0, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' };
     case 'exception':
+      return { ...base, borderRadius: '50%' };
     case 'main':
     default:
       return { ...base, borderRadius: '50%' };
@@ -125,4 +131,90 @@ export function edgeLineStyle(role: DiagramPortRole | undefined): EdgeLineStyle 
     default:
       return { stroke: DEFAULT_STROKE, strokeWidth: 1.5 };
   }
+}
+
+export const BASE_NODE_WIDTH = 220;
+export const BASE_NODE_HEIGHT = 54;
+export const PORT_PITCH = 28;
+
+/**
+ * Calculates the required node dimensions (width and height) to comfortably fit
+ * the ports along each edge with sufficient pitch (28px minimum center-to-center),
+ * avoiding overlapping handles when a node has multiple outputs (e.g. Branch to Topic).
+ * Control ports are excluded as they are not visually rendered.
+ */
+export function calculateNodeDimensions(
+  ports?: { position: DiagramPortSide; role?: DiagramPortRole }[],
+  explicitWidth?: number,
+  explicitHeight?: number,
+  activityType?: string,
+  conditionText?: string,
+): { width: number; height: number } {
+  if (activityType === 'ConditionalActivity') {
+    if (explicitWidth && explicitHeight) {
+      return {
+        width: Math.max(explicitWidth, 80),
+        height: Math.max(explicitHeight, 69),
+      };
+    }
+    const textLen = (conditionText ?? 'Condition').length;
+    // Base dimensions: 110px width x 95px height (matching ~1.158:1 user screenshot ratio)
+    // Scales smoothly for longer condition text while strictly preserving the 1.158:1 rhombus ratio
+    const autoWidth = Math.round(Math.max(110, Math.min(320, 68 + textLen * 4.5)));
+    const autoHeight = Math.round(Math.max(95, Math.min(276, autoWidth / 1.15789)));
+    return {
+      width: explicitWidth ? Math.max(explicitWidth, 80) : autoWidth,
+      height: explicitHeight ? Math.max(explicitHeight, 69) : autoHeight,
+    };
+  }
+
+  if (activityType === 'StartNode' || activityType === 'StartActivity') {
+    return {
+      width: 14,
+      height: 14,
+    };
+  }
+
+  if (activityType === 'EndActivity') {
+    return {
+      width: 16,
+      height: 16,
+    };
+  }
+
+  if (activityType === 'SwitchActivity' || activityType === 'ParallelActivity' || activityType === 'RepeatActivity' || activityType === 'ForEachActivity') {
+    const visiblePorts = (ports ?? []).filter((port) => port.role !== 'control');
+    const rightPorts = visiblePorts.filter((p) => p.position === 'right');
+    const portCount = Math.max(rightPorts.length, 2);
+    // Vertical spacing: comfortable 44px pitch per branch row
+    const autoHeight = Math.max(110, (portCount + 1) * 44);
+    return {
+      width: explicitWidth ? Math.max(explicitWidth, 24) : 24,
+      height: explicitHeight ? Math.max(explicitHeight, 110) : autoHeight,
+    };
+  }
+
+  const visiblePorts = (ports ?? []).filter((port) => port.role !== 'control');
+
+  let leftCount = 0;
+  let rightCount = 0;
+  let topCount = 0;
+  let bottomCount = 0;
+
+  for (const port of visiblePorts) {
+    if (port.position === 'left') leftCount++;
+    else if (port.position === 'right') rightCount++;
+    else if (port.position === 'top') topCount++;
+    else if (port.position === 'bottom') bottomCount++;
+  }
+
+  const maxVertical = Math.max(leftCount, rightCount);
+  const minRequiredHeight = maxVertical > 1 ? (maxVertical + 1) * PORT_PITCH : BASE_NODE_HEIGHT;
+  const height = Math.max(explicitHeight ?? 0, minRequiredHeight);
+
+  const maxHorizontal = Math.max(topCount, bottomCount);
+  const minRequiredWidth = maxHorizontal > 1 ? (maxHorizontal + 1) * PORT_PITCH : BASE_NODE_WIDTH;
+  const width = Math.max(explicitWidth ?? 0, minRequiredWidth);
+
+  return { width, height };
 }

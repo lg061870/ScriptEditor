@@ -69,33 +69,125 @@ public static class CSharpToJsonParser
             throw new CSharpParseException([new ParseDiagnostic("Error", "No BuildWorkflow() method body found.", null)]);
         }
 
-        var addCalls = buildWorkflow.Body.Statements
+        var addStatements = buildWorkflow.Body.Statements
             .OfType<ExpressionStatementSyntax>()
-            .Select(s => s.Expression)
-            .OfType<InvocationExpressionSyntax>()
-            .Where(IsAddCall)
+            .Where(s => s.Expression is InvocationExpressionSyntax invocation && IsAddCall(invocation))
             .ToList();
 
-        var nodes = new List<DiagramNodeV2>();
-        for (var i = 0; i < addCalls.Count; i++)
+        var allNodes = new List<DiagramNodeV2>();
+        var happyPathNodes = new List<DiagramNodeV2>();
+        var edges = new List<DiagramEdgeV2>();
+        int edgeCounter = 1;
+        int nodeIndexCounter = 0;
+
+        for (var i = 0; i < addStatements.Count; i++)
         {
-            var creation = addCalls[i].ArgumentList.Arguments.FirstOrDefault()?.Expression as ObjectCreationExpressionSyntax;
+            var stmt = addStatements[i];
+            var invocation = (InvocationExpressionSyntax)stmt.Expression;
+            var creation = invocation.ArgumentList.Arguments.FirstOrDefault()?.Expression as ObjectCreationExpressionSyntax;
             if (creation is null) continue;
-            nodes.Add(ParseNode(creation, i));
+            var node = ParseNode(creation, nodeIndexCounter++);
+
+            if (node.Type == "ParallelActivity")
+            {
+                var triviaText = stmt.GetLeadingTrivia().ToFullString();
+                var branchMatch = System.Text.RegularExpressions.Regex.Match(triviaText, @"//\s*branches:\s*(.+)");
+                if (branchMatch.Success)
+                {
+                    var bText = branchMatch.Groups[1].Value.Trim();
+                    node.Data["branches"] = bText;
+                    node.Data["branchCount"] = bText.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries).Length.ToString();
+                }
+            }
+
+            happyPathNodes.Add(node);
+            allNodes.Add(node);
+
+            // Check for OnExceptionActivity in creation initializer
+            foreach (var (key, value) in InitializerAssignments(creation))
+            {
+                if (key == "OnExceptionActivity" && value is ObjectCreationExpressionSyntax excCreation)
+                {
+                    var excNodes = ParseExceptionBranch(excCreation, ref nodeIndexCounter);
+                    if (excNodes.Count > 0)
+                    {
+                        for (int k = 0; k < excNodes.Count; k++)
+                        {
+                            excNodes[k].X = node.X + (k * 240);
+                            excNodes[k].Y = node.Y + 160;
+                            allNodes.Add(excNodes[k]);
+                        }
+
+                        edges.Add(new DiagramEdgeV2
+                        {
+                            Id = $"e{edgeCounter++}",
+                            From = new DiagramEndpointV2 { Node = node.Id, Port = $"{node.Id}-exc" },
+                            To = new DiagramEndpointV2 { Node = excNodes[0].Id, Port = $"{excNodes[0].Id}-in" }
+                        });
+
+                        for (int k = 0; k < excNodes.Count - 1; k++)
+                        {
+                            edges.Add(new DiagramEdgeV2
+                            {
+                                Id = $"e{edgeCounter++}",
+                                From = new DiagramEndpointV2 { Node = excNodes[k].Id, Port = $"{excNodes[k].Id}-out" },
+                                To = new DiagramEndpointV2 { Node = excNodes[k + 1].Id, Port = $"{excNodes[k + 1].Id}-in" }
+                            });
+                        }
+                    }
+                }
+            }
         }
 
-        var edges = new List<DiagramEdgeV2>();
-        for (var i = 0; i < nodes.Count - 1; i++)
+        for (var i = 0; i < happyPathNodes.Count - 1; i++)
         {
             edges.Add(new DiagramEdgeV2
             {
-                Id = $"e{i + 1}",
-                From = new DiagramEndpointV2 { Node = nodes[i].Id, Port = $"{nodes[i].Id}-out" },
-                To = new DiagramEndpointV2 { Node = nodes[i + 1].Id, Port = $"{nodes[i + 1].Id}-in" },
+                Id = $"e{edgeCounter++}",
+                From = new DiagramEndpointV2 { Node = happyPathNodes[i].Id, Port = $"{happyPathNodes[i].Id}-out" },
+                To = new DiagramEndpointV2 { Node = happyPathNodes[i + 1].Id, Port = $"{happyPathNodes[i + 1].Id}-in" },
             });
         }
 
-        return new DiagramDocumentV2 { Nodes = nodes, Edges = edges };
+        return new DiagramDocumentV2 { Nodes = allNodes, Edges = edges };
+    }
+
+    private static List<DiagramNodeV2> ParseExceptionBranch(ObjectCreationExpressionSyntax excCreation, ref int nodeIndexCounter)
+    {
+        var list = new List<DiagramNodeV2>();
+        var rawTypeName = excCreation.Type.ToString();
+        var typeName = rawTypeName.Contains('<')
+            ? rawTypeName[..rawTypeName.IndexOf('<')].Trim()
+            : rawTypeName;
+
+        if (typeName == "CompositeActivity")
+        {
+            var args = excCreation.ArgumentList?.Arguments;
+            if (args != null && args.Value.Count > 1)
+            {
+                var secondArg = args.Value[1].Expression;
+                if (secondArg is ArrayCreationExpressionSyntax arrayCreation && arrayCreation.Initializer != null)
+                {
+                    foreach (var element in arrayCreation.Initializer.Expressions.OfType<ObjectCreationExpressionSyntax>())
+                    {
+                        list.Add(ParseNode(element, nodeIndexCounter++));
+                    }
+                }
+                else if (secondArg is ImplicitArrayCreationExpressionSyntax impArray && impArray.Initializer != null)
+                {
+                    foreach (var element in impArray.Initializer.Expressions.OfType<ObjectCreationExpressionSyntax>())
+                    {
+                        list.Add(ParseNode(element, nodeIndexCounter++));
+                    }
+                }
+            }
+        }
+        else
+        {
+            list.Add(ParseNode(excCreation, nodeIndexCounter++));
+        }
+
+        return list;
     }
 
     private static bool IsAddCall(InvocationExpressionSyntax invocation) =>
@@ -103,7 +195,10 @@ public static class CSharpToJsonParser
 
     private static DiagramNodeV2 ParseNode(ObjectCreationExpressionSyntax creation, int index)
     {
-        var typeName = creation.Type.ToString();
+        var rawTypeName = creation.Type.ToString();
+        var typeName = rawTypeName.Contains('<')
+            ? rawTypeName[..rawTypeName.IndexOf('<')].Trim()
+            : rawTypeName;
         var positionalArgs = creation.ArgumentList?.Arguments.Where(a => a.NameColon is null).ToList() ?? [];
         var namedArgs = creation.ArgumentList?.Arguments.Where(a => a.NameColon is not null)
             .ToDictionary(a => a.NameColon!.Name.Identifier.Text, a => a.Expression) ?? [];
@@ -117,7 +212,7 @@ public static class CSharpToJsonParser
                 id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
                 if (positionalArgs.Count > 1)
                 {
-                    data["message"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                    data["message"] = ParseSimpleActivityMessage(positionalArgs[1].Expression) ?? "";
                 }
                 break;
 
@@ -153,6 +248,250 @@ public static class CSharpToJsonParser
                 }
                 break;
 
+            case "QuickAnswerActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (positionalArgs.Count > 1)
+                {
+                    data["question"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                }
+                if (positionalArgs.Count > 2)
+                {
+                    var answersArg = positionalArgs[2].Expression;
+                    if (answersArg is ArrayCreationExpressionSyntax arrSyntax && arrSyntax.Initializer != null)
+                    {
+                        var items = arrSyntax.Initializer.Expressions
+                            .Select(e => StringLiteralValue(e) ?? "")
+                            .Where(s => !string.IsNullOrEmpty(s));
+                        data["answers"] = string.Join(" | ", items);
+                        data["optionsMode"] = "static";
+                    }
+                    else if (answersArg is ImplicitArrayCreationExpressionSyntax impArr && impArr.Initializer != null)
+                    {
+                        var items = impArr.Initializer.Expressions
+                            .Select(e => StringLiteralValue(e) ?? "")
+                            .Where(s => !string.IsNullOrEmpty(s));
+                        data["answers"] = string.Join(" | ", items);
+                        data["optionsMode"] = "static";
+                    }
+                    else if (StringLiteralValue(answersArg) is string varName)
+                    {
+                        data["answersVariable"] = varName;
+                        data["optionsMode"] = "variable";
+                    }
+                }
+                if (namedArgs.TryGetValue("answersVariableKey", out var awk))
+                {
+                    data["answersVariable"] = StringLiteralValue(awk) ?? "";
+                    data["optionsMode"] = "variable";
+                }
+                if (namedArgs.TryGetValue("outputVariable", out var outVar))
+                {
+                    data["outputVariable"] = StringLiteralValue(outVar) ?? "";
+                }
+                else if (positionalArgs.Count > 6)
+                {
+                    data["outputVariable"] = StringLiteralValue(positionalArgs[6].Expression) ?? "";
+                }
+                if (namedArgs.TryGetValue("isRequired", out var isReqExpr))
+                {
+                    data["required"] = LiteralValueAsString(isReqExpr);
+                }
+                else if (positionalArgs.Count > 5)
+                {
+                    data["required"] = LiteralValueAsString(positionalArgs[5].Expression);
+                }
+                foreach (var (key, value) in InitializerAssignments(creation))
+                {
+                    if (key == "IsRequired") data["required"] = LiteralValueAsString(value);
+                }
+                break;
+
+            case "AdaptiveCardActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (namedArgs.TryGetValue("modelContextKey", out var mck))
+                {
+                    data["submissionContextKey"] = StringLiteralValue(mck) ?? "";
+                }
+                foreach (var (key, value) in InitializerAssignments(creation))
+                {
+                    if (key == "IsRequired") data["required"] = LiteralValueAsString(value);
+                }
+                break;
+
+            case "PublishHostNotificationActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (positionalArgs.Count > 1)
+                {
+                    data["eventName"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                }
+                break;
+
+
+
+            case "InvokeToolActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (positionalArgs.Count > 1)
+                {
+                    data["toolId"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                }
+                if (positionalArgs.Count > 5)
+                {
+                    data["resultContextKey"] = StringLiteralValue(positionalArgs[5].Expression) ?? "";
+                }
+                else if (namedArgs.TryGetValue("resultContextKey", out var rck))
+                {
+                    data["resultContextKey"] = StringLiteralValue(rck) ?? "";
+                }
+                break;
+
+            case "SetVariableActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (positionalArgs.Count > 1)
+                {
+                    data["variableName"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                }
+                if (positionalArgs.Count > 2)
+                {
+                    data["value"] = StringLiteralValue(positionalArgs[2].Expression) ?? "";
+                }
+                if (positionalArgs.Count > 5)
+                {
+                    data["isGlobal"] = LiteralValueAsString(positionalArgs[5].Expression);
+                }
+                else if (namedArgs.TryGetValue("isGlobal", out var isGlobArg))
+                {
+                    data["isGlobal"] = LiteralValueAsString(isGlobArg);
+                }
+                else
+                {
+                    data["isGlobal"] = "true";
+                }
+                data["validateNaming"] = "true";
+                foreach (var (key, value) in InitializerAssignments(creation))
+                {
+                    if (key == "ValidateGlobalNaming" || key == "ValidateNaming")
+                    {
+                        data["validateNaming"] = LiteralValueAsString(value);
+                    }
+                    else if (key == "VariableName")
+                    {
+                        data["variableName"] = StringLiteralValue(value) ?? "";
+                    }
+                    else if (key == "Value")
+                    {
+                        data["value"] = StringLiteralValue(value) ?? "";
+                    }
+                    else if (key == "IsGlobal")
+                    {
+                        data["isGlobal"] = LiteralValueAsString(value);
+                    }
+                }
+                break;
+
+            case "SwitchActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                if (positionalArgs.Count > 1)
+                {
+                    data["valueContextKey"] = StringLiteralValue(positionalArgs[1].Expression) ?? "";
+                }
+                if (positionalArgs.ElementAtOrDefault(2)?.Expression is ObjectCreationExpressionSyntax dictCreation &&
+                    dictCreation.Initializer is not null)
+                {
+                    var keys = new List<string>();
+                    foreach (var expr in dictCreation.Initializer.Expressions)
+                    {
+                        if (expr is AssignmentExpressionSyntax assign &&
+                            assign.Left is ImplicitElementAccessSyntax elemAccess &&
+                            elemAccess.ArgumentList.Arguments.FirstOrDefault()?.Expression is ExpressionSyntax keyArg)
+                        {
+                            var k = StringLiteralValue(keyArg);
+                            if (!string.IsNullOrEmpty(k)) keys.Add(k);
+                        }
+                    }
+                    if (keys.Count > 0)
+                    {
+                        data["caseKeys"] = string.Join(" | ", keys);
+                    }
+                }
+                if (positionalArgs.Count > 3 && positionalArgs[3].Expression is not LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression })
+                {
+                    if (positionalArgs[3].Expression is ObjectCreationExpressionSyntax defaultObj &&
+                        defaultObj.ArgumentList?.Arguments.Count > 1)
+                    {
+                        data["defaultCase"] = StringLiteralValue(defaultObj.ArgumentList.Arguments[1].Expression) ?? "Default";
+                    }
+                    else
+                    {
+                        data["defaultCase"] = "Default";
+                    }
+                }
+                else
+                {
+                    data["defaultCase"] = "";
+                }
+                data["loopAfterCase"] = "false";
+                foreach (var (key, value) in InitializerAssignments(creation))
+                {
+                    if (key == "LoopAfterCase")
+                    {
+                        data["loopAfterCase"] = LiteralValueAsString(value);
+                    }
+                    else if (key == "ValueContextKey")
+                    {
+                        data["valueContextKey"] = StringLiteralValue(value) ?? "";
+                    }
+                    else if (key == "CaseKeys")
+                    {
+                        data["caseKeys"] = StringLiteralValue(value) ?? "";
+                    }
+                    else if (key == "DefaultCase")
+                    {
+                        data["defaultCase"] = StringLiteralValue(value) ?? "";
+                    }
+                }
+                break;
+
+            case "ParallelActivity":
+                id = StringLiteralValue(positionalArgs.ElementAtOrDefault(0)?.Expression) ?? $"node-{index}";
+                data.TryAdd("branches", "Branch 1 | Branch 2");
+                data.TryAdd("branchCount", "2");
+                if (positionalArgs.ElementAtOrDefault(1)?.Expression is ArrayCreationExpressionSyntax arrCreation &&
+                    arrCreation.Initializer is not null)
+                {
+                    var branchNames = new List<string>();
+                    foreach (var expr in arrCreation.Initializer.Expressions)
+                    {
+                        if (expr is ObjectCreationExpressionSyntax childCreation)
+                        {
+                            var childId = StringLiteralValue(childCreation.ArgumentList?.Arguments.FirstOrDefault()?.Expression);
+                            if (!string.IsNullOrEmpty(childId))
+                            {
+                                var label = childId.StartsWith($"{id}_") ? childId.Substring(id.Length + 1) : childId;
+                                branchNames.Add(label);
+                            }
+                        }
+                    }
+                    if (branchNames.Count > 0)
+                    {
+                        data["branches"] = string.Join(" | ", branchNames);
+                        data["branchCount"] = branchNames.Count.ToString();
+                    }
+                }
+                data["continueOnError"] = "false";
+                data["completeMessage"] = "";
+                foreach (var (key, value) in InitializerAssignments(creation))
+                {
+                    if (key == "ContinueOnError")
+                    {
+                        data["continueOnError"] = LiteralValueAsString(value);
+                    }
+                    else if (key == "CompleteMessage")
+                    {
+                        data["completeMessage"] = StringLiteralValue(value) ?? "";
+                    }
+                }
+                break;
+
             default:
                 // Generic fallback (inverts JsonToCSharpTranscriber.BuildGenericFallback):
                 // first positional arg is the id; every object-initializer
@@ -174,12 +513,25 @@ public static class CSharpToJsonParser
             X = index * 260,
             Y = 0,
             Data = data,
-            Ports =
-            [
-                new DiagramPortV2 { Id = $"{id}-in", Name = "Input", Direction = DiagramPortDirectionV2.Input, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Left },
-                new DiagramPortV2 { Id = $"{id}-out", Name = "Output", Direction = DiagramPortDirectionV2.Output, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Right },
-            ],
+            Ports = BuildPortsForParsedNode(id, typeName, data),
         };
+    }
+
+    private static List<DiagramPortV2> BuildPortsForParsedNode(string id, string typeName, Dictionary<string, string> data)
+    {
+        return
+        [
+            new DiagramPortV2 { Id = $"{id}-in", Name = "Input", Direction = DiagramPortDirectionV2.Input, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Left },
+            new DiagramPortV2 { Id = $"{id}-out", Name = "Output", Direction = DiagramPortDirectionV2.Output, Role = DiagramPortRoleV2.Main, Type = "flow", Position = DiagramPortSideV2.Right },
+            new DiagramPortV2 { Id = $"{id}-exc", Name = "Exception", Direction = DiagramPortDirectionV2.Output, Role = DiagramPortRoleV2.Exception, Type = "flow", Position = DiagramPortSideV2.Bottom },
+        ];
+    }
+
+    private static string Slugify(string label)
+    {
+        var lower = label.ToLowerInvariant();
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(lower, @"[^a-z0-9]+", "-");
+        return cleaned.Trim('-');
     }
 
     private static IEnumerable<(string Key, ExpressionSyntax Value)> InitializerAssignments(ObjectCreationExpressionSyntax creation)
@@ -213,6 +565,79 @@ public static class CSharpToJsonParser
         expression is LiteralExpressionSyntax { Token.RawKind: (int)SyntaxKind.StringLiteralToken } literal
             ? literal.Token.ValueText
             : null;
+
+    private static string? ParseSimpleActivityMessage(ExpressionSyntax? expression)
+    {
+        if (expression == null) return null;
+        if (StringLiteralValue(expression) is { } literal) return literal;
+
+        if (expression is LambdaExpressionSyntax lambda)
+        {
+            var body = lambda.Body switch
+            {
+                BlockSyntax block => block.Statements.OfType<ReturnStatementSyntax>().FirstOrDefault()?.Expression,
+                ExpressionSyntax expr => expr,
+                _ => null
+            };
+
+            while (body is CastExpressionSyntax cast)
+            {
+                body = cast.Expression;
+            }
+
+            if (body is InterpolatedStringExpressionSyntax interpolated)
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var content in interpolated.Contents)
+                {
+                    if (content is InterpolatedStringTextSyntax text)
+                    {
+                        sb.Append(text.TextToken.ValueText);
+                    }
+                    else if (content is InterpolationSyntax interpolation)
+                    {
+                        var varName = ExtractVariableName(interpolation.Expression);
+                        if (varName != null)
+                        {
+                            sb.Append('{').Append(varName).Append('}');
+                        }
+                        else
+                        {
+                            sb.Append('{').Append(interpolation.Expression.ToString()).Append('}');
+                        }
+                    }
+                }
+                return sb.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractVariableName(ExpressionSyntax? expr)
+    {
+        while (expr is ParenthesizedExpressionSyntax paren)
+        {
+            expr = paren.Expression;
+        }
+
+        if (expr is ConditionalExpressionSyntax cond)
+        {
+            return ExtractVariableName(cond.WhenFalse) ?? ExtractVariableName(cond.WhenTrue);
+        }
+
+        if (expr is InvocationExpressionSyntax inv)
+        {
+            var arg = inv.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+            if (StringLiteralValue(arg) is { } name)
+            {
+                return name;
+            }
+        }
+
+        return null;
+    }
+
 
     private static string LiteralValueAsString(ExpressionSyntax expression) => expression switch
     {

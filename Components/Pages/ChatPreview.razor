@@ -1,0 +1,133 @@
+@page "/preview-chat"
+@using ConversaCore.UI.Components
+@using ConversaCore.UI.Models
+@using ConversaCore.Runtime
+@inject IJSRuntime JSRuntime
+
+<PageTitle>ConversaCore Live Preview</PageTitle>
+
+<div class="chat-preview-host @GetHostClass()">
+    <CustomChatWindowV3 Style="@currentStyle" StyleChanged="HandleStyleChanged" MinimizeChanged="HandleMinimizeChanged" />
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? Style { get; set; }
+
+    private ChatStyle currentStyle = ChatStyle.SidebarChat;
+    private bool initializedFromQuery = false;
+
+    protected override void OnParametersSet()
+    {
+        base.OnParametersSet();
+        if (!initializedFromQuery)
+        {
+            initializedFromQuery = true;
+            currentStyle = Style?.ToLowerInvariant() switch
+            {
+                "floating" or "floatingchat" => ChatStyle.FloatingChat,
+                "chatwindow" or "window" or "chatgpt" => ChatStyle.ChatWindow,
+                _ => ChatStyle.SidebarChat
+            };
+        }
+    }
+
+    private async Task HandleStyleChanged(ChatStyle newStyle)
+    {
+        currentStyle = newStyle;
+        StateHasChanged();
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", $"window.parent.postMessage({{ type: 'conversa-chat-style', style: '{newStyle}' }}, '*')");
+        }
+        catch
+        {
+            // Ignore if running outside iframe
+        }
+    }
+
+    private async Task HandleMinimizeChanged(bool isMinimized)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", $"window.parent.postMessage({{ type: 'conversa-floating-minimized', isMinimized: {(isMinimized ? "true" : "false")} }}, '*')");
+        }
+        catch
+        {
+            // Ignore if running outside iframe
+        }
+    }
+
+    // In-chat reset is handled internally by CustomChatWindowV3.ExecuteReset()
+    // without destroying the iframe circuit. Recompile is triggered via the canvas toolbar 'Run' button.
+
+    private string GetHostClass() => currentStyle switch
+    {
+        ChatStyle.FloatingChat => "host-floating",
+        ChatStyle.ChatWindow => "host-chatwindow",
+        _ => "host-sidebar"
+    };
+}
+
+<style>
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: transparent;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+    .chat-preview-host {
+        height: 100vh;
+        width: 100vw;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+    }
+    .chat-preview-host.host-sidebar {
+        background: #f9fafb;
+    }
+    .chat-preview-host.host-sidebar .chat-window-container {
+        height: 100% !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    .chat-preview-host.host-chatwindow {
+        background: #f9fafb;
+    }
+    .chat-preview-host.host-chatwindow .chat-window-container.style-chatwindow {
+        height: 100% !important;
+        max-height: 100% !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-y: auto !important;
+        justify-content: flex-start !important;
+    }
+    .chat-preview-host.host-chatwindow .chat-window-container.style-chatwindow .chat-prompt-initial {
+        min-height: auto !important;
+        height: auto !important;
+        justify-content: flex-start !important;
+        padding: 2rem 1.5rem 3rem !important;
+        margin: 0 auto !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .chat-preview-host.host-chatwindow .chat-window-container.style-chatwindow:not(.conversation-started) .chat-interface {
+        display: none !important;
+    }
+    .chat-preview-host.host-chatwindow .chat-window-container.style-chatwindow.conversation-started .chat-prompt-initial {
+        display: none !important;
+    }
+    .chat-preview-host.host-chatwindow .chat-window-container.style-chatwindow .chat-interface {
+        height: 100% !important;
+        max-height: 100% !important;
+        margin: 0 auto !important;
+        border-radius: 0 !important;
+    }
+    .chat-preview-host.host-floating {
+        background: transparent;
+    }
+</style>

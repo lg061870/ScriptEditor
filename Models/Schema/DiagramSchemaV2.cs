@@ -231,4 +231,6 @@ public sealed class DiagramDocumentV2
     public List<DiagramAdaptiveCardDefinitionV2> Cards { get; set; } = [];
 
     public List<DiagramAdaptiveModelDefinitionV2> Models { get; set; } = [];
+
+    public List<string> FreeFloatingNodeIds { get; set; } = [];
 }

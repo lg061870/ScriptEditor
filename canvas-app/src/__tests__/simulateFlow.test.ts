@@ -146,3 +146,4 @@ describe('advance: ChatPromptAttentionActivity (fire-and-forget, does not wait)'
     expect(result.promptAttention).toEqual({ text: 'Please respond', durationMs: 2000 });
   });
 });
+

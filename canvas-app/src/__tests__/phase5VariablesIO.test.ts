@@ -24,11 +24,11 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
       'ShowSuggestionsActivity',
       'InteractiveActivity',
       'ChatPromptAttentionActivity',
-      'GreetingActivity',
     ];
     for (const type of types) {
       expect(getActivityDefinition(type), `${type} should be seeded`).toBeDefined();
     }
+    expect(getActivityDefinition('GreetingActivity')).toBeUndefined();
   });
 
   it('SetVariableActivity matches the doc defaults', () => {
@@ -119,10 +119,6 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
     });
   });
 
-  it('GreetingActivity: greeting is doc-parity only -- the real class hardcodes its message with no parameter at all', () => {
-    expect(getActivityDefinition('GreetingActivity')!.defaultData).toEqual({ greeting: 'Welcome! How can I help you?' });
-  });
-
   it('every new/updated type produces the standard 4-port shape via createDiagramNode (except AdaptiveCardActivity, covered above)', () => {
     for (const type of [
       'SetVariableActivity',
@@ -133,7 +129,6 @@ describe('Phase 5.3: Variables & State + I/O parity', () => {
       'ShowSuggestionsActivity',
       'InteractiveActivity',
       'ChatPromptAttentionActivity',
-      'GreetingActivity',
     ]) {
       const node = createDiagramNode(type, { x: 0, y: 0 });
       expect(node.ports.map((p) => p.name), type).toEqual(['Input', 'Output', 'Exception', 'Control']);

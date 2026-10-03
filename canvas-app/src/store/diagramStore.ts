@@ -1,30 +1,10 @@
 import { create } from 'zustand';
-import type { DiagramDocument, DiagramEndpoint } from '../schema/diagram';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { DiagramDocument, DiagramEndpoint, DiagramPortSide, TopicDocument } from '../schema/diagram';
 import { sampleDocument } from '../fixtures/sampleDocument';
 import { createDiagramNode, nextEdgeId, buildPortsFromDefs } from '../actions/createNode';
 import { resolveActivityPortDefs } from '../registry/activityDefinitions';
-
-/**
- * Central JSON store (Phase 2.1). Every canvas mutation -- add, move,
- * wire, delete, edit -- dispatches through one of the action methods here;
- * React Flow's own node/edge arrays are always DERIVED from `document`
- * (via src/mapping/toReactFlow.ts), never the other way around. This
- * replaces the ad-hoc useState<DiagramDocument> + inline mutation
- * functions that lived in App.tsx through Phase 1.
- *
- * Library choice: Zustand. Decided in this issue, per its acceptance
- * criteria. Picked over Redux for this app's scope: no middleware/
- * boilerplate needed for a single flat document + a handful of actions,
- * a plain hook (no <Provider>), and it's a natural fit for the
- * "components read via a selector, actions call store methods directly"
- * pattern already established informally in Phase 1's App.tsx.
- *
- * Origin-token plumbing (Phase 2.3, ADR 0002) is layered on top of this
- * same structure -- every action below already takes an `origin` param
- * for that reason, even though the loop-prevention behavior it enables
- * (skipping a code-regen trigger for CodeEditor-origin mutations) lands
- * in that later commit.
- */
+import { computeGraphReachability } from '../analysis/graphReachability';
 
 export type MutationOrigin = 'Canvas' | 'CodeEditor' | 'Inspector';
 
@@ -33,58 +13,322 @@ export interface PendingConnection {
   sourcePortId: string;
 }
 
-interface DiagramStoreState {
+export interface DiagramStoreState {
+  topics: TopicDocument[];
+  activeTopicId: string;
   document: DiagramDocument;
   versionId: number;
 
-  /** Bumped by every mutation whose origin is NOT 'CodeEditor' (Phase 2.3
-   * / ADR 0002's loop-prevention rule: a CodeEditor-origin mutation is a
-   * reflection of the code editor's own text and must not re-trigger a
-   * new json-to-csharp transcription request). Phase 2.4's preview panel
-   * derives its text straight from `document` (cheap, synchronous,
-   * harmless to recompute unconditionally); this counter is the signal
-   * Phase 3.3 will actually gate the real debounced API call on. */
+  projectPath: string | null;
+  lastSavedAt: string | null;
+
   codeRegenRequestCount: number;
 
-  // Selection and in-progress "+" connections are UI state, not part of
-  // the JSON SSOT -- ADR 0002 is explicit that Canvas/Inspector both
-  // re-render unconditionally regardless of origin, and neither concept
-  // has an origin token of its own for that reason.
   selectedNodeIds: ReadonlySet<string>;
+  selectedEdgeIds: ReadonlySet<string>;
   pendingConnection: PendingConnection | null;
+
+  // Multi-Topic Management
+  addTopic: (name?: string) => string;
+  selectTopic: (topicId: string) => void;
+  renameTopic: (topicId: string, newName: string) => void;
+  deleteTopic: (topicId: string) => void;
+  duplicateTopic: (topicId: string) => void;
+  setInitialTopic: (topicId: string) => void;
+
+  // Project & Persistence Management
+  setProjectPath: (path: string | null) => void;
+  resetToStarter: () => void;
+  loadWorkspace: (topics: TopicDocument[], activeTopicId?: string, projectPath?: string | null) => void;
+  markWorkspaceSaved: () => void;
 
   addNode: (type: string, position: { x: number; y: number }, origin: MutationOrigin) => string;
   moveNode: (nodeId: string, position: { x: number; y: number }, origin: MutationOrigin) => void;
+  renameNode: (nodeId: string, name: string, origin?: MutationOrigin) => void;
+  resizeNode: (nodeId: string, width: number, height: number, origin?: MutationOrigin) => void;
   updateNodeData: (nodeId: string, key: string, value: string, origin: MutationOrigin) => void;
+  updatePortSide: (nodeId: string, portId: string, side: DiagramPortSide, origin?: MutationOrigin) => void;
   connectEdge: (from: DiagramEndpoint, to: DiagramEndpoint, origin: MutationOrigin) => void;
   removeNodes: (nodeIds: string[], origin: MutationOrigin) => void;
   removeEdges: (edgeIds: string[], origin: MutationOrigin) => void;
   replaceDocument: (document: DiagramDocument, origin: MutationOrigin | null) => void;
 
   setSelection: (ids: ReadonlySet<string>) => void;
+  setEdgeSelection: (ids: ReadonlySet<string>) => void;
   setPendingConnection: (pending: PendingConnection | null) => void;
 }
 
-/** Every mutating action funnels through this so versionId and the
- * regen-request counter are bumped in exactly one place. */
+function sanitizeTopicId(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9_]/g, '');
+  return cleaned.length > 0 ? cleaned : `Topic_${Date.now().toString(36)}`;
+}
+
+function createStarterDiagramDocument(): DiagramDocument {
+  const startNode = createDiagramNode('StartNode', { x: 80, y: 150 });
+  const helloNode = createDiagramNode('SimpleActivity', { x: 280, y: 150 });
+  helloNode.data = { mode: 'message', message: 'Hello from this topic!' };
+  const startPort = startNode.ports.find((p) => p.direction === 'output');
+  const helloPort = helloNode.ports.find((p) => p.direction === 'input');
+  const edges = (startPort && helloPort)
+    ? [{ id: nextEdgeId(), from: { node: startNode.id, port: startPort.id }, to: { node: helloNode.id, port: helloPort.id } }]
+    : [];
+  const doc: DiagramDocument = {
+    viewport: { panX: 0, panY: 0, zoom: 1 },
+    nodes: [startNode, helloNode],
+    edges,
+    cards: [],
+    models: [],
+  };
+  const { freeFloatingNodeIds } = computeGraphReachability(doc);
+  doc.freeFloatingNodeIds = freeFloatingNodeIds;
+  return doc;
+}
+
+const initialTopic: TopicDocument = {
+  id: 'MainConversation',
+  name: 'MainConversation',
+  isInitial: true,
+  isDirty: false,
+  document: sampleDocument,
+};
+
+export function upgradeRepeatActivityPorts(doc: DiagramDocument): DiagramDocument {
+  if (!doc?.nodes || !doc.nodes.some((n) => (n.type === 'RepeatActivity' || n.type === 'ForEachActivity') && !n.ports.some((p) => p.id.endsWith('loop-body')))) {
+    return doc;
+  }
+  const nodes = doc.nodes.map((node) => {
+    if ((node.type === 'RepeatActivity' || node.type === 'ForEachActivity') && !node.ports.some((p) => p.id.endsWith('loop-body'))) {
+      const newPorts = buildPortsFromDefs(node.id, resolveActivityPortDefs(node.type, node.data));
+      return { ...node, ports: newPorts };
+    }
+    return node;
+  });
+  const edges = doc.edges.map((edge) => {
+    const srcNode = nodes.find((n) => n.id === edge.from.node);
+    if ((srcNode?.type === 'RepeatActivity' || srcNode?.type === 'ForEachActivity') && edge.from.port.endsWith('-out')) {
+      return {
+        ...edge,
+        from: {
+          ...edge.from,
+          port: `${srcNode.id}-loop-body`,
+        },
+      };
+    }
+    return edge;
+  });
+  return { ...doc, nodes, edges };
+}
+
 function applyMutation(
   set: (fn: (state: DiagramStoreState) => Partial<DiagramStoreState>) => void,
   origin: MutationOrigin,
   updateDocument: (document: DiagramDocument) => DiagramDocument,
 ) {
-  set((state) => ({
-    document: updateDocument(state.document),
-    versionId: state.versionId + 1,
-    codeRegenRequestCount: origin === 'CodeEditor' ? state.codeRegenRequestCount : state.codeRegenRequestCount + 1,
-  }));
+  set((state) => {
+    const rawDoc = updateDocument(state.document);
+    const { freeFloatingNodeIds } = computeGraphReachability(rawDoc);
+    const nextDoc: DiagramDocument = {
+      ...rawDoc,
+      freeFloatingNodeIds,
+    };
+    const nextTopics = state.topics.map((t) =>
+      t.id === state.activeTopicId ? { ...t, document: nextDoc, isDirty: true } : t,
+    );
+    return {
+      document: nextDoc,
+      topics: nextTopics,
+      versionId: state.versionId + 1,
+      codeRegenRequestCount: origin === 'CodeEditor' ? state.codeRegenRequestCount : state.codeRegenRequestCount + 1,
+    };
+  });
 }
 
-export const useDiagramStore = create<DiagramStoreState>((set) => ({
-  document: sampleDocument,
-  versionId: 0,
-  codeRegenRequestCount: 0,
-  selectedNodeIds: new Set(),
-  pendingConnection: null,
+export const useDiagramStore = create<DiagramStoreState>()(
+  persist(
+    (set, get) => ({
+      topics: [initialTopic],
+      activeTopicId: 'MainConversation',
+      document: sampleDocument,
+      versionId: 0,
+      projectPath: null,
+      lastSavedAt: null,
+      codeRegenRequestCount: 0,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      pendingConnection: null,
+
+      setProjectPath: (projectPath) => set({ projectPath }),
+
+      resetToStarter: () => {
+        const starterTopic: TopicDocument = {
+          id: 'MainConversation',
+          name: 'MainConversation',
+          isInitial: true,
+          isDirty: false,
+          document: sampleDocument,
+        };
+        set({
+          topics: [starterTopic],
+          activeTopicId: 'MainConversation',
+          document: sampleDocument,
+          projectPath: null,
+          lastSavedAt: null,
+          selectedNodeIds: new Set(),
+          selectedEdgeIds: new Set(),
+          pendingConnection: null,
+          versionId: get().versionId + 1,
+          codeRegenRequestCount: get().codeRegenRequestCount + 1,
+        });
+      },
+
+      loadWorkspace: (topics, activeTopicId, projectPath) => {
+        if (!topics || topics.length === 0) return;
+        const upgradedTopics = topics.map((t) => ({ ...t, document: upgradeRepeatActivityPorts(t.document) }));
+        const initial = upgradedTopics.find((t) => t.isInitial) ?? upgradedTopics[0];
+        const targetId = activeTopicId && upgradedTopics.some((t) => t.id === activeTopicId) ? activeTopicId : initial.id;
+        const targetTopic = upgradedTopics.find((t) => t.id === targetId) ?? initial;
+        set({
+          topics: upgradedTopics,
+          activeTopicId: targetTopic.id,
+          document: targetTopic.document,
+          projectPath: projectPath !== undefined ? projectPath : get().projectPath,
+          selectedNodeIds: new Set(),
+          selectedEdgeIds: new Set(),
+          pendingConnection: null,
+          versionId: get().versionId + 1,
+          codeRegenRequestCount: get().codeRegenRequestCount + 1,
+        });
+      },
+
+      markWorkspaceSaved: () => {
+        set((state) => ({
+          topics: state.topics.map((t) => ({ ...t, isDirty: false })),
+          lastSavedAt: new Date().toLocaleTimeString(),
+        }));
+      },
+
+      addTopic: (name) => {
+    const rawName = name?.trim() || `Topic_${get().topics.length + 1}`;
+    const id = sanitizeTopicId(rawName);
+    let finalId = id;
+    let counter = 1;
+    while (get().topics.some((t) => t.id === finalId)) {
+      finalId = `${id}_${counter++}`;
+    }
+    const newTopic: TopicDocument = {
+      id: finalId,
+      name: rawName,
+      isInitial: false,
+      isDirty: false,
+      document: createStarterDiagramDocument(),
+    };
+    set((state) => ({
+      topics: [...state.topics, newTopic],
+      activeTopicId: finalId,
+      document: newTopic.document,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      pendingConnection: null,
+      versionId: state.versionId + 1,
+      codeRegenRequestCount: state.codeRegenRequestCount + 1,
+    }));
+    return finalId;
+  },
+
+  selectTopic: (topicId) => {
+    const target = get().topics.find((t) => t.id === topicId);
+    if (!target || target.id === get().activeTopicId) return;
+    set((state) => ({
+      activeTopicId: target.id,
+      document: target.document,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      pendingConnection: null,
+      versionId: state.versionId + 1,
+      codeRegenRequestCount: state.codeRegenRequestCount + 1,
+    }));
+  },
+
+  renameTopic: (topicId, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const newId = sanitizeTopicId(trimmed);
+    set((state) => {
+      const topics = state.topics.map((t) => {
+        if (t.id !== topicId) return t;
+        return { ...t, id: newId, name: trimmed };
+      });
+      const activeTopicId = state.activeTopicId === topicId ? newId : state.activeTopicId;
+      return {
+        topics,
+        activeTopicId,
+        versionId: state.versionId + 1,
+        codeRegenRequestCount: state.codeRegenRequestCount + 1,
+      };
+    });
+  },
+
+  deleteTopic: (topicId) => {
+    const { topics, activeTopicId } = get();
+    if (topics.length <= 1) return;
+    const remaining = topics.filter((t) => t.id !== topicId);
+    const hasInitial = remaining.some((t) => t.isInitial);
+    if (!hasInitial && remaining.length > 0) {
+      remaining[0] = { ...remaining[0], isInitial: true };
+    }
+    const nextActiveId = activeTopicId === topicId ? remaining[0].id : activeTopicId;
+    const nextActiveTopic = remaining.find((t) => t.id === nextActiveId) ?? remaining[0];
+    set((state) => ({
+      topics: remaining,
+      activeTopicId: nextActiveTopic.id,
+      document: nextActiveTopic.document,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      pendingConnection: null,
+      versionId: state.versionId + 1,
+      codeRegenRequestCount: state.codeRegenRequestCount + 1,
+    }));
+  },
+
+  duplicateTopic: (topicId) => {
+    const target = get().topics.find((t) => t.id === topicId);
+    if (!target) return;
+    const dupName = `${target.name}_Copy`;
+    const dupId = sanitizeTopicId(dupName);
+    let finalId = dupId;
+    let counter = 1;
+    while (get().topics.some((t) => t.id === finalId)) {
+      finalId = `${dupId}_${counter++}`;
+    }
+    const clonedDoc: DiagramDocument = JSON.parse(JSON.stringify(target.document));
+    const newTopic: TopicDocument = {
+      id: finalId,
+      name: dupName,
+      isInitial: false,
+      isDirty: false,
+      document: clonedDoc,
+    };
+    set((state) => ({
+      topics: [...state.topics, newTopic],
+      activeTopicId: finalId,
+      document: clonedDoc,
+      selectedNodeIds: new Set(),
+      selectedEdgeIds: new Set(),
+      pendingConnection: null,
+      versionId: state.versionId + 1,
+      codeRegenRequestCount: state.codeRegenRequestCount + 1,
+    }));
+  },
+
+  setInitialTopic: (topicId) => {
+    set((state) => ({
+      topics: state.topics.map((t) => ({
+        ...t,
+        isInitial: t.id === topicId,
+      })),
+      versionId: state.versionId + 1,
+    }));
+  },
 
   addNode: (type, position, origin) => {
     const newNode = createDiagramNode(type, position);
@@ -96,6 +340,32 @@ export const useDiagramStore = create<DiagramStoreState>((set) => ({
     applyMutation(set, origin, (document) => ({
       ...document,
       nodes: document.nodes.map((n) => (n.id === nodeId ? { ...n, x: position.x, y: position.y } : n)),
+    }));
+  },
+
+  renameNode: (nodeId, name, origin = 'Canvas') => {
+    const trimmed = name.trim();
+    applyMutation(set, origin, (document) => ({
+      ...document,
+      nodes: document.nodes.map((n) =>
+        n.id === nodeId
+          ? {
+              ...n,
+              name: trimmed,
+              customName: trimmed,
+              data: { ...n.data, customName: trimmed },
+            }
+          : n,
+      ),
+    }));
+  },
+
+  resizeNode: (nodeId, width, height, origin) => {
+    applyMutation(set, origin ?? 'Canvas', (document) => ({
+      ...document,
+      nodes: document.nodes.map((n) =>
+        n.id === nodeId ? { ...n, width: Math.round(width), height: Math.round(height) } : n,
+      ),
     }));
   },
 
@@ -130,6 +400,19 @@ export const useDiagramStore = create<DiagramStoreState>((set) => ({
     });
   },
 
+  updatePortSide: (nodeId, portId, side, origin = 'Inspector') => {
+    applyMutation(set, origin, (document) => ({
+      ...document,
+      nodes: document.nodes.map((node) => {
+        if (node.id !== nodeId) return node;
+        return {
+          ...node,
+          ports: (node.ports || []).map((port) => (port.id === portId ? { ...port, position: side } : port)),
+        };
+      }),
+    }));
+  },
+
   connectEdge: (from, to, origin) => {
     applyMutation(set, origin, (document) => ({
       ...document,
@@ -138,7 +421,14 @@ export const useDiagramStore = create<DiagramStoreState>((set) => ({
   },
 
   removeNodes: (nodeIds, origin) => {
-    const removeIds = new Set(nodeIds);
+    const docNodes = get().document.nodes;
+    const removeIds = new Set(
+      nodeIds.filter((id) => {
+        const node = docNodes.find((n) => n.id === id);
+        return node?.type !== 'StartNode' && node?.type !== 'StartActivity';
+      })
+    );
+    if (removeIds.size === 0) return;
     applyMutation(set, origin, (document) => ({
       ...document,
       nodes: document.nodes.filter((n) => !removeIds.has(n.id)),
@@ -157,20 +447,56 @@ export const useDiagramStore = create<DiagramStoreState>((set) => ({
       ...document,
       edges: document.edges.filter((e) => !removeIds.has(e.id)),
     }));
+    set((state) => {
+      const nextEdges = new Set(state.selectedEdgeIds);
+      for (const id of removeIds) nextEdges.delete(id);
+      return { selectedEdgeIds: nextEdges };
+    });
   },
 
   replaceDocument: (document, origin) => {
+    const upgraded = upgradeRepeatActivityPorts(document);
+    const { freeFloatingNodeIds } = computeGraphReachability(upgraded);
+    const docWithReachability = { ...upgraded, freeFloatingNodeIds };
     if (origin === null) {
-      // Initial load / workspace open -- not a mutation of an existing
-      // document, so no view has an echo to suppress and no regen
-      // request is meaningful yet (ADR 0002: "not a mutation... carries
-      // no origin token at all").
-      set((state) => ({ document, versionId: state.versionId + 1 }));
+      set((state) => {
+        const nextTopics = state.topics.map((t) =>
+          t.id === state.activeTopicId ? { ...t, document: docWithReachability, isDirty: false } : t,
+        );
+        return { document: docWithReachability, topics: nextTopics, versionId: state.versionId + 1 };
+      });
       return;
     }
-    applyMutation(set, origin, () => document);
+    applyMutation(set, origin, () => docWithReachability);
   },
 
   setSelection: (ids) => set({ selectedNodeIds: ids }),
+  setEdgeSelection: (ids) => set({ selectedEdgeIds: ids }),
   setPendingConnection: (pending) => set({ pendingConnection: pending }),
-}));
+    }),
+    {
+      name: 'conversa_scripteditor_workspace',
+      storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          const upgradedTopics = (state.topics || []).map((t) => ({
+            ...t,
+            document: upgradeRepeatActivityPorts(t.document),
+          }));
+          const currentDoc =
+            upgradedTopics.find((t) => t.id === state.activeTopicId)?.document ??
+            (state.document ? upgradeRepeatActivityPorts(state.document) : state.document);
+          state.topics = upgradedTopics;
+          state.document = currentDoc;
+        }
+      },
+      partialize: (state) => ({
+        topics: state.topics,
+        activeTopicId: state.activeTopicId,
+        document: state.document,
+        projectPath: state.projectPath,
+        lastSavedAt: state.lastSavedAt,
+      }),
+    },
+  ),
+);

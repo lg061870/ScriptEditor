@@ -36,24 +36,21 @@ export interface CatalogEntry {
 
 export const ACTIVITY_CATALOG: CatalogEntry[] = [
   // Sequence
+  { type: 'StartNode', category: 'Sequence' },
   { type: 'SimpleActivity', category: 'Sequence' },
   { type: 'CompositeActivity', category: 'Sequence' },
   { type: 'DelayActivity', category: 'Sequence' },
   { type: 'EndActivity', category: 'Sequence' },
   // Selection
   { type: 'ConditionalActivity', category: 'Selection' },
-  { type: 'Conditional<QuickAnswer>', category: 'Selection' },
-  { type: 'Conditional<TriggerTopic>', category: 'Selection' },
   { type: 'DecisionActivity', category: 'Selection' },
   { type: 'SwitchActivity', category: 'Selection' },
-  { type: 'ChoiceActivity', category: 'Selection' },
   // Iteration
   { type: 'RepeatActivity', category: 'Iteration' },
   { type: 'ForEachActivity', category: 'Iteration' },
   // Concurrency
   { type: 'ParallelActivity', category: 'Concurrency' },
   // Exception Handling
-  { type: 'OnErrorActivity', category: 'Exception Handling' },
   { type: 'FallbackActivity', category: 'Exception Handling' },
   { type: 'EscalateActivity', category: 'Exception Handling' },
   // Variables & State
@@ -69,13 +66,13 @@ export const ACTIVITY_CATALOG: CatalogEntry[] = [
   { type: 'ShowSuggestionsActivity', category: 'I/O' },
   { type: 'InteractiveActivity', category: 'I/O' },
   { type: 'ChatPromptAttentionActivity', category: 'I/O' },
-  { type: 'GreetingActivity', category: 'I/O' },
   // Events & Subroutines
   { type: 'EventTriggerActivity', category: 'Events & Subroutines' },
   { type: 'TriggerTopicActivity', category: 'Events & Subroutines' },
   { type: 'ExecuteTopicActivity', category: 'Events & Subroutines' },
   { type: 'CompleteTopicActivity', category: 'Events & Subroutines' },
   { type: 'MultipleTopicsMatchedActivity', category: 'Events & Subroutines' },
+  { type: 'InvokeToolActivity', category: 'Events & Subroutines' },
   // Semantic/AI
   { type: 'SemanticResponseActivity', category: 'Semantic/AI' },
   { type: 'SemanticQueryActivity', category: 'Semantic/AI' },

@@ -6,7 +6,11 @@ import type { DiagramDocument } from '../schema/diagram';
  * own Properties/launchSettings.json ("http" profile, port 5093) --
  * override with VITE_API_BASE_URL for a different backend port/host.
  */
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5093';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (typeof window !== 'undefined' && window.location.port !== '5173' && window.location.origin
+    ? window.location.origin
+    : 'http://localhost:5093');
 
 /** Mirrors ScriptEditor.Transcription.ParseDiagnostic (Phase 3.5). */
 export interface ParseDiagnostic {
@@ -31,8 +35,11 @@ export class CSharpParseError extends Error {
   }
 }
 
-export async function jsonToCSharp(document: DiagramDocument): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/api/transcribe/json-to-csharp`, {
+export async function jsonToCSharp(document: DiagramDocument, className?: string): Promise<string> {
+  const url = className
+    ? `${API_BASE_URL}/api/transcribe/json-to-csharp?className=${encodeURIComponent(className)}`
+    : `${API_BASE_URL}/api/transcribe/json-to-csharp`;
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(document),
@@ -55,9 +62,7 @@ export interface CompileDiagnostic {
  * by /api/transcribe/run, the explicit "Run"/"Reset" action WorkflowCompiler.cs's
  * own doc comment describes -- real Roslyn CSharpCompilation.Emit + a
  * collectible AssemblyLoadContext load against the real ConversaCore.dll
- * reference, not a simulation. Doesn't instantiate a running instance
- * (needs a live TopicWorkflowContext/ILogger this app doesn't have) --
- * see WorkflowCompiler.cs's own scope-boundary comment. */
+ * reference, not a simulation. */
 export interface CompileResult {
   success: boolean;
   diagnostics: CompileDiagnostic[];
@@ -65,11 +70,30 @@ export interface CompileResult {
   generatedCSharp: string;
 }
 
-export async function compileAndRun(document: DiagramDocument): Promise<CompileResult> {
-  const response = await fetch(`${API_BASE_URL}/api/transcribe/run`, {
+export interface TopicRunItem {
+  name: string;
+  document: DiagramDocument;
+  isInitial?: boolean;
+}
+
+export interface MultiTopicRunRequest {
+  topics: TopicRunItem[];
+  initialTopicName?: string;
+  targetTopicName?: string;
+}
+
+export async function compileAndRun(
+  documentOrRequest: DiagramDocument | MultiTopicRunRequest,
+): Promise<CompileResult> {
+  const isWorkspace = 'topics' in documentOrRequest;
+  const url = isWorkspace
+    ? `${API_BASE_URL}/api/transcribe/run-workspace`
+    : `${API_BASE_URL}/api/transcribe/run`;
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(document),
+    body: JSON.stringify(documentOrRequest),
   });
   if (!response.ok) {
     throw new Error(`run failed: ${response.status} ${response.statusText}`);

@@ -4,11 +4,11 @@ import { getActivityDefinition } from '../registry/activityDefinitions';
 
 /**
  * Phase 5.1's acceptance criteria (#33): SimpleActivity, CompositeActivity,
- * DelayActivity, EndActivity, ConditionalActivity, Conditional<QuickAnswer>,
- * Conditional<TriggerTopic>, DecisionActivity, SwitchActivity, ChoiceActivity
+ * DelayActivity, EndActivity, ConditionalActivity,
+ * DecisionActivity, SwitchActivity
  * all present with parameters/ports matching docs/activity-shapes.md
- * exactly. The 6 branching types (Conditional*, DecisionActivity,
- * SwitchActivity, ChoiceActivity) were already seeded in Phase 4.1/4.4 and
+ * exactly. The branching types (Conditional*, DecisionActivity,
+ * SwitchActivity) were already seeded in Phase 4.1/4.4 and
  * already matched; this covers what changed/was added here specifically:
  * SimpleActivity's `mode` field, DelayActivity's durationMs rename, and
  * the two new CompositeActivity/EndActivity definitions.
@@ -28,7 +28,9 @@ describe('Phase 5.1: Sequence category parameter/port parity', () => {
 
   it('CompositeActivity is seeded with all 3 doc parameters and the standard 4-port shape', () => {
     const def = getActivityDefinition('CompositeActivity')!;
-    expect(def.defaultData).toEqual({ childCount: '8', isolateContext: 'false', completeMessage: 'Composite completed' });
+    expect(def.defaultData.isolateContext).toBe('false');
+    expect(def.defaultData.completeMessage).toBe('Composite completed');
+    expect(def.defaultData.steps).toBeDefined();
 
     const node = createDiagramNode('CompositeActivity', { x: 0, y: 0 });
     expect(node.ports.map((p) => [p.name, p.role])).toEqual([
@@ -39,31 +41,26 @@ describe('Phase 5.1: Sequence category parameter/port parity', () => {
     ]);
   });
 
-  it('EndActivity is seeded with endMessage and NO Control port (docs/activity-shapes.md agrees: it terminates the flow)', () => {
+  it('EndActivity is seeded with endMessage and NO outgoing ports (terminates the flow)', () => {
     const def = getActivityDefinition('EndActivity')!;
     expect(def.defaultData).toEqual({ endMessage: 'Done' });
 
     const node = createDiagramNode('EndActivity', { x: 0, y: 0 });
     expect(node.ports.map((p) => [p.name, p.role])).toEqual([
       ['Input', 'main'],
-      ['Output', 'main'],
-      ['Exception', 'exception'],
     ]);
-    expect(node.ports.some((p) => p.role === 'control')).toBe(false);
+    expect(node.ports.some((p) => p.direction === 'output')).toBe(false);
   });
 
-  it('all 10 Sequence+Selection types are now seeded (not falling back to the generic pair)', () => {
+  it('all 7 Sequence+Selection types are now seeded (not falling back to the generic pair)', () => {
     const types = [
       'SimpleActivity',
       'CompositeActivity',
       'DelayActivity',
       'EndActivity',
       'ConditionalActivity',
-      'Conditional<QuickAnswer>',
-      'Conditional<TriggerTopic>',
       'DecisionActivity',
       'SwitchActivity',
-      'ChoiceActivity',
     ];
     for (const type of types) {
       expect(getActivityDefinition(type), `${type} should be seeded`).toBeDefined();

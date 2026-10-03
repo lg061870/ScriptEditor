@@ -4,21 +4,54 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <DefaultItemExcludes>$(DefaultItemExcludes);ScriptEditor.Tests\**;canvas-app\**;spike\**;archive\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\InsuranceSemanticV2\ConversaCore\ConversaCore.csproj" />
+    <Reference Include="ConversaCore">
+      <HintPath>libs\ConversaCore.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="ConversaCore.UI">
+      <HintPath>libs\ConversaCore.UI.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <!-- ScriptEditor.Tests is a separate project nested under this folder;
-         without this, the default SDK-style **/*.cs glob pulls its files
-         (and xunit-dependent code) into this project's own compilation. -->
-    <Compile Remove="ScriptEditor.Tests\**\*.cs" />
+    <None Update="libs\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="ScriptEditor.Tests\**" />
+    <Content Remove="ScriptEditor.Tests\**" />
+    <None Remove="ScriptEditor.Tests\**" />
+    <Compile Remove="canvas-app\**" />
+    <Content Remove="canvas-app\**" />
+    <None Remove="canvas-app\**" />
+    <Compile Remove="spike\**" />
+    <Content Remove="spike\**" />
+    <None Remove="spike\**" />
+    <Compile Remove="archive\**" />
+    <Content Remove="archive\**" />
+    <None Remove="archive\**" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.2" />
+    <PackageReference Include="System.Threading.Channels" Version="10.0.2" />
+    <PackageReference Include="Microsoft.SemanticKernel.Core" Version="1.71.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.2.0" />
   </ItemGroup>
+
+  <Target Name="BuildCanvasApp" BeforeTargets="Build" Condition="!Exists('canvas-app\dist\index.html')">
+    <Exec Command="npm run build" WorkingDirectory="canvas-app" />
+  </Target>
 
 </Project>
