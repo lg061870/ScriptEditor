@@ -40,7 +40,6 @@ export function ChatPreviewPanel({
   isActive = false,
 }: ChatPreviewPanelProps) {
   const [compileStatus, setCompileStatus] = useState<CompileStatus>({ kind: 'compiling' });
-  const [runId, setRunId] = useState<number>(() => Date.now());
   const [chatStyle, setChatStyle] = useState<ChatStyleMode>('SidebarChat');
   const [floatingMinimized, setFloatingMinimized] = useState<boolean>(false);
   const [runScope, setRunScope] = useState<ExecutionScope>('full');
@@ -85,7 +84,6 @@ export function ChatPreviewPanel({
         if (!aliveRef.current) return;
         if (res.success) {
           setCompileStatus({ kind: 'success', typeName: res.generatedTypeName });
-          setRunId(Date.now());
         } else {
           setCompileStatus({ kind: 'error', diagnostics: res.diagnostics });
         }
@@ -305,8 +303,7 @@ export function ChatPreviewPanel({
 
             {compileStatus.kind === 'success' && (
               <iframe
-                key={runId}
-                src={`${API_BASE_URL}/preview-chat?runId=${runId}&style=${chatStyle}`}
+                src={`${API_BASE_URL}/preview-chat?style=${chatStyle}`}
                 title="ConversaCore.UI CustomChatWindowV3"
                 style={{
                   width: '100%',
@@ -338,8 +335,7 @@ export function ChatPreviewPanel({
           }}
         >
           <iframe
-            key={runId}
-            src={`${API_BASE_URL}/preview-chat?runId=${runId}&style=FloatingChat`}
+            src={`${API_BASE_URL}/preview-chat?style=FloatingChat`}
             title="ConversaCore.UI CustomChatWindowV3 (Floating)"
             style={{
               width: '100%',

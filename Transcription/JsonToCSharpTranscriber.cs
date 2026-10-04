@@ -278,7 +278,7 @@ public static class JsonToCSharpTranscriber
                 continue;
 
             var id = node.Name ?? node.Id;
-            if (node.Type is "SetVariableActivity" or "GlobalVariableActivity" || (node.Data != null && node.Data.Values.Any(v => System.Text.RegularExpressions.Regex.IsMatch(v, @"\{[a-zA-Z0-9_]+\}"))))
+            if (node.Type is "SetVariableActivity" or "GlobalVariableActivity" || (node.Data != null && node.Data.Values.Any(v => System.Text.RegularExpressions.Regex.IsMatch(v, @"\{\s*[a-zA-Z0-9_]+\s*\}"))))
             {
                 needsConversationContext = true;
             }
@@ -902,7 +902,7 @@ public static class JsonToCSharpTranscriber
     private static ExpressionSyntax BuildSimpleActivity(string id, Dictionary<string, string> data)
     {
         var message = data.GetValueOrDefault("message", "");
-        var varMatches = System.Text.RegularExpressions.Regex.Matches(message, @"\{([a-zA-Z0-9_]+)\}");
+        var varMatches = System.Text.RegularExpressions.Regex.Matches(message, @"\{\s*([a-zA-Z0-9_]+)\s*\}");
         if (varMatches.Count == 0)
         {
             return ObjectCreationExpression(IdentifierName("SimpleActivity"))
@@ -1238,7 +1238,7 @@ public static class JsonToCSharpTranscriber
             trimmed = assignMatch.Groups[1].Value.Trim();
         }
 
-        var varMatches = System.Text.RegularExpressions.Regex.Matches(trimmed, @"\{([a-zA-Z0-9_]+)\}");
+        var varMatches = System.Text.RegularExpressions.Regex.Matches(trimmed, @"\{\s*([a-zA-Z0-9_]+)\s*\}");
 
         // 1. Range syntax: e.g. 1..5, 0..10, {start}..{end}, 1..{count}
         var rangeMatch = System.Text.RegularExpressions.Regex.Match(trimmed, @"^(?<start>\d+|\{[a-zA-Z0-9_]+\})\s*\.\.\s*(?<end>\d+|\{[a-zA-Z0-9_]+\})$");

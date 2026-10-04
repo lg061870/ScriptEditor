@@ -57,6 +57,8 @@ export interface AdvanceResult {
    * (not inside) the message list. */
   suggestionChips?: string[];
   promptAttention?: { text: string; durationMs: number } | null;
+  /** Persistent simulation context variables across conversation turns. */
+  variables?: Record<string, string>;
 }
 
 export function findEntryNode(document: DiagramDocument): DiagramNode | null {
@@ -87,7 +89,14 @@ type VisitOutcome =
   | { kind: 'wait'; steps: ChatStep[]; waiting: WaitKind; waitOptions?: string[]; waitButtonLabel?: string }
   | { kind: 'end'; steps: ChatStep[] };
 
-function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOutcome {
+function interpolateText(text: string | undefined, vars: Record<string, string>): string {
+  if (!text) return '';
+  return text.replace(/\{\s*([a-zA-Z0-9_]+)\s*\}/g, (match, varName) => {
+    return vars[varName] !== undefined ? vars[varName] : match;
+  });
+}
+
+function visitNode(node: DiagramNode, resumeValue: string | undefined, vars: Record<string, string>): VisitOutcome {
   const data = node.data;
   const summary = () => getNodeSummary(node.type, data);
   const branchPorts = mainOutputPorts(node);
@@ -95,7 +104,7 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
   if (isBranching) {
     if (resumeValue === undefined) {
-      const prompt = data.question || data.prompt || data.message;
+      const prompt = interpolateText(data.question || data.prompt || data.message, vars);
       const steps: ChatStep[] = prompt ? [{ kind: 'bot', text: prompt }] : [];
       return { kind: 'wait', steps, waiting: 'choice', waitOptions: branchPorts.map((p) => p.name) };
     }
@@ -103,40 +112,32 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
   }
 
   switch (node.type) {
-    case 'SimpleActivity':
-      return { kind: 'auto', steps: [{ kind: 'bot', text: data.message || summary() }] };
+    case 'SimpleActivity': {
+      const rawText = data.message || summary();
+      return { kind: 'auto', steps: [{ kind: 'bot', text: interpolateText(rawText, vars) }] };
+    }
 
     case 'EndActivity':
-      return { kind: 'end', steps: data.endMessage ? [{ kind: 'bot', text: data.endMessage }] : [] };
+      return { kind: 'end', steps: data.endMessage ? [{ kind: 'bot', text: interpolateText(data.endMessage, vars) }] : [] };
 
     case 'CompleteTopicActivity':
-      return { kind: 'end', steps: [{ kind: 'bot', text: data.completionMessage || summary() }] };
+      return { kind: 'end', steps: [{ kind: 'bot', text: interpolateText(data.completionMessage || summary(), vars) }] };
 
     case 'MultipleTopicsMatchedActivity':
-      return { kind: 'auto', steps: [{ kind: 'bot', text: data.message || summary() }] };
+      return { kind: 'auto', steps: [{ kind: 'bot', text: interpolateText(data.message || summary(), vars) }] };
 
     case 'ResetActivity':
-      return { kind: 'auto', steps: [{ kind: 'bot', text: data.resetMessage || summary() }] };
+      return { kind: 'auto', steps: [{ kind: 'bot', text: interpolateText(data.resetMessage || summary(), vars) }] };
 
     case 'WaitForUserInputActivity':
     case 'InteractiveActivity': {
-      const prompt = data.prompt || data.message || summary();
+      const prompt = interpolateText(data.prompt || data.message || summary(), vars);
       if (resumeValue === undefined) {
         return { kind: 'wait', steps: [{ kind: 'bot', text: prompt }], waiting: 'text' };
       }
-      return { kind: 'auto', steps: [{ kind: 'user', text: resumeValue }] };
-    }
-
-    case 'QuickAnswerActivity': {
-      const options = (data.answers || '').split('|').map((s) => s.trim()).filter(Boolean);
-      const prompt = data.question;
-      if (resumeValue === undefined) {
-        return {
-          kind: 'wait',
-          steps: prompt ? [{ kind: 'bot', text: prompt }] : [],
-          waiting: 'choice',
-          waitOptions: options.length > 0 ? options : ['Continue'],
-        };
+      if (data.variableName || data.resultVariable) {
+        const targetVar = data.variableName || data.resultVariable;
+        vars[targetVar] = resumeValue;
       }
       return { kind: 'auto', steps: [{ kind: 'user', text: resumeValue }] };
     }
@@ -145,7 +146,7 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
       if (resumeValue === undefined) {
         return {
           kind: 'wait',
-          steps: [{ kind: 'bot', text: data.message || summary() }],
+          steps: [{ kind: 'bot', text: interpolateText(data.message || summary(), vars) }],
           waiting: 'click',
           waitButtonLabel: 'Sign In',
         };
@@ -172,7 +173,7 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
     }
 
     case 'QuickAnswerActivity': {
-      const question = data.question || 'Please choose an option:';
+      const question = interpolateText(data.question || 'Please choose an option:', vars);
       const mode = data.optionsMode === 'variable' || (data.answersVariable && data.optionsMode !== 'static')
         ? 'variable'
         : 'static';
@@ -180,7 +181,7 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
       if (mode === 'variable') {
         const varName = data.answersVariable || 'choices';
-        choices = [`[Dynamic: ${varName} 1]`, `[Dynamic: ${varName} 2]`];
+        choices = vars[varName] ? vars[varName].split('|').map((s) => s.trim()).filter(Boolean) : [`[Dynamic: ${varName} 1]`, `[Dynamic: ${varName} 2]`];
       } else {
         choices = (data.answers || 'Option A | Option B')
           .split('|')
@@ -198,6 +199,11 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
         };
       }
 
+      if (data.variableName || data.resultVariable) {
+        const targetVar = data.variableName || data.resultVariable;
+        vars[targetVar] = resumeValue;
+      }
+
       return {
         kind: 'auto',
         steps: [{ kind: 'user', text: resumeValue || choices[0] }],
@@ -206,15 +212,16 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
 
     case 'ChatPromptAttentionActivity': {
       const durationMs = Number.parseInt(data.durationMs || '3000', 10) || 3000;
+      const msg = interpolateText(data.message || summary(), vars);
       return {
         kind: 'auto',
-        steps: [{ kind: 'system', text: `✦ Prompt attention: ${data.message || summary()}` }],
-        promptAttention: { text: data.message || summary(), durationMs },
+        steps: [{ kind: 'system', text: `✦ Prompt attention: ${msg}` }],
+        promptAttention: { text: msg, durationMs },
       };
     }
 
     case 'ShowSuggestionsActivity': {
-      const chips = (data.suggestions || '').split('|').map((s) => s.trim()).filter(Boolean);
+      const chips = (data.suggestions || '').split('|').map((s) => interpolateText(s.trim(), vars)).filter(Boolean);
       return { kind: 'auto', steps: [], suggestionChips: chips };
     }
 
@@ -238,10 +245,25 @@ function visitNode(node: DiagramNode, resumeValue: string | undefined): VisitOut
     case 'DecisionActivity':
       return { kind: 'auto', steps: [{ kind: 'system', text: `🧠 ${summary()}` }] };
 
-    case 'SetVariableActivity':
-    case 'GlobalVariableActivity':
-    case 'DumpCtxActivity':
+    case 'SetVariableActivity': {
+      if (data.variableName) {
+        vars[data.variableName] = interpolateText(data.value ?? '', vars);
+      }
+      return { kind: 'auto', steps: [{ kind: 'system', text: `🔧 Set ${data.variableName || 'Variable'} = ${vars[data.variableName || ''] ?? ''}` }] };
+    }
+
+    case 'GlobalVariableActivity': {
+      if (data.promotionMode === 'specific' && data.sourceKey) {
+        const destKey = data.globalKey?.replace('<Key>', data.sourceKey) || data.sourceKey;
+        if (vars[data.sourceKey] !== undefined) {
+          vars[destKey] = vars[data.sourceKey];
+        }
+      }
       return { kind: 'auto', steps: [{ kind: 'system', text: `🔧 ${summary()}` }] };
+    }
+
+    case 'DumpCtxActivity':
+      return { kind: 'auto', steps: [{ kind: 'system', text: `🔧 Context: ${JSON.stringify(vars)}` }] };
 
     case 'FallbackActivity':
     case 'EscalateActivity':
@@ -271,8 +293,14 @@ function resolveNextEdge(document: DiagramDocument, node: DiagramNode, chosenPor
  * it hits another node that needs user input, an EndActivity/
  * CompleteTopicActivity, or a dead end (no wired outgoing edge).
  */
-export function advance(document: DiagramDocument, currentNodeId: string | null, resumeValue?: string): AdvanceResult {
+export function advance(
+  document: DiagramDocument,
+  currentNodeId: string | null,
+  resumeValue?: string,
+  initialVariables?: Record<string, string>,
+): AdvanceResult {
   const steps: ChatStep[] = [];
+  const vars: Record<string, string> = { ...(initialVariables ?? {}) };
   let suggestionChips: AdvanceResult['suggestionChips'];
   let promptAttention: AdvanceResult['promptAttention'] = null;
   let nodeId = currentNodeId;
@@ -281,23 +309,23 @@ export function advance(document: DiagramDocument, currentNodeId: string | null,
   if (nodeId === null) {
     const entry = findEntryNode(document);
     if (!entry) {
-      return { steps: [{ kind: 'system', text: 'No nodes on the canvas yet.' }], currentNodeId: null, waiting: null, ended: false, deadEnd: true };
+      return { steps: [{ kind: 'system', text: 'No nodes on the canvas yet.' }], currentNodeId: null, waiting: null, ended: false, deadEnd: true, variables: vars };
     }
     nodeId = entry.id;
     firstVisitResume = undefined;
   } else {
     const node = findNode(document, nodeId);
     if (!node) {
-      return { steps: [{ kind: 'system', text: 'The node the preview was waiting on no longer exists -- resetting.' }], currentNodeId: null, waiting: null, ended: false, deadEnd: true };
+      return { steps: [{ kind: 'system', text: 'The node the preview was waiting on no longer exists -- resetting.' }], currentNodeId: null, waiting: null, ended: false, deadEnd: true, variables: vars };
     }
-    const outcome = visitNode(node, firstVisitResume);
+    const outcome = visitNode(node, firstVisitResume, vars);
     steps.push(...outcome.steps);
     if (outcome.kind === 'wait') {
       // Shouldn't happen (a resume always carries a value), but stay put defensively.
-      return { steps, currentNodeId: nodeId, waiting: outcome.waiting, waitOptions: outcome.waitOptions, waitButtonLabel: outcome.waitButtonLabel, ended: false, deadEnd: false };
+      return { steps, currentNodeId: nodeId, waiting: outcome.waiting, waitOptions: outcome.waitOptions, waitButtonLabel: outcome.waitButtonLabel, ended: false, deadEnd: false, variables: vars };
     }
     if (outcome.kind === 'end') {
-      return { steps, currentNodeId: null, waiting: null, ended: true, deadEnd: false };
+      return { steps, currentNodeId: null, waiting: null, ended: true, deadEnd: false, variables: vars };
     }
     const nextEdge = outcome.kind === 'auto-branch' ? resolveNextEdge(document, node, outcome.chosenPortName) : resolveNextEdge(document, node);
     if (outcome.kind === 'auto') {
@@ -305,7 +333,7 @@ export function advance(document: DiagramDocument, currentNodeId: string | null,
       if (outcome.promptAttention) promptAttention = outcome.promptAttention;
     }
     if (!nextEdge?.to) {
-      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention };
+      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention, variables: vars };
     }
     nodeId = nextEdge.to.node;
   }
@@ -314,16 +342,16 @@ export function advance(document: DiagramDocument, currentNodeId: string | null,
   for (;;) {
     const node = findNode(document, nodeId);
     if (!node) {
-      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention };
+      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention, variables: vars };
     }
-    const outcome = visitNode(node, undefined);
+    const outcome = visitNode(node, undefined, vars);
     steps.push(...outcome.steps);
 
     if (outcome.kind === 'wait') {
-      return { steps, currentNodeId: node.id, waiting: outcome.waiting, waitOptions: outcome.waitOptions, waitButtonLabel: outcome.waitButtonLabel, ended: false, deadEnd: false, suggestionChips, promptAttention };
+      return { steps, currentNodeId: node.id, waiting: outcome.waiting, waitOptions: outcome.waitOptions, waitButtonLabel: outcome.waitButtonLabel, ended: false, deadEnd: false, suggestionChips, promptAttention, variables: vars };
     }
     if (outcome.kind === 'end') {
-      return { steps, currentNodeId: null, waiting: null, ended: true, deadEnd: false, suggestionChips, promptAttention };
+      return { steps, currentNodeId: null, waiting: null, ended: true, deadEnd: false, suggestionChips, promptAttention, variables: vars };
     }
     if (outcome.kind === 'auto') {
       if (outcome.suggestionChips) suggestionChips = outcome.suggestionChips;
@@ -332,7 +360,7 @@ export function advance(document: DiagramDocument, currentNodeId: string | null,
 
     const nextEdge = outcome.kind === 'auto-branch' ? resolveNextEdge(document, node, outcome.chosenPortName) : resolveNextEdge(document, node);
     if (!nextEdge?.to) {
-      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention };
+      return { steps, currentNodeId: null, waiting: null, ended: false, deadEnd: true, suggestionChips, promptAttention, variables: vars };
     }
     nodeId = nextEdge.to.node;
   }

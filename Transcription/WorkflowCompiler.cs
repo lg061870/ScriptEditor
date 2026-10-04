@@ -49,6 +49,20 @@ public static class WorkflowCompiler
     {
         var csharp = JsonToCSharpTranscriber.Transcribe(document, className);
 
+        try
+        {
+            var genDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Topics", "Generated");
+            if (!Directory.Exists(genDir))
+            {
+                Directory.CreateDirectory(genDir);
+            }
+            File.WriteAllText(Path.Combine(genDir, $"{className}.cs"), csharp);
+        }
+        catch
+        {
+            // Best-effort file disk sync
+        }
+
         var wrapped = "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.ComponentModel.DataAnnotations;\nusing System.Text.Json.Serialization;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + csharp + "\n}\n";
 
         var syntaxTree = CSharpSyntaxTree.ParseText(wrapped);
@@ -106,10 +120,27 @@ public static class WorkflowCompiler
         }
 
         var sb = new System.Text.StringBuilder();
+        var genDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Topics", "Generated");
+        try
+        {
+            if (!Directory.Exists(genDir))
+            {
+                Directory.CreateDirectory(genDir);
+            }
+        }
+        catch { }
+
         foreach (var topic in topicList)
         {
             var cleanName = !string.IsNullOrWhiteSpace(topic.Name) ? topic.Name.Trim() : "MainConversation";
             var csharp = JsonToCSharpTranscriber.Transcribe(topic.Document, cleanName);
+
+            try
+            {
+                File.WriteAllText(Path.Combine(genDir, $"{cleanName}.cs"), csharp);
+            }
+            catch { }
+
             sb.AppendLine($"// --- Topic: {cleanName} ---");
             sb.AppendLine(csharp);
             sb.AppendLine();
