@@ -3,19 +3,22 @@
 @using ConversaCore.UI.Models
 @using ConversaCore.Runtime
 @inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
 
 <PageTitle>ConversaCore Live Preview</PageTitle>
 
 <div class="chat-preview-host @GetHostClass()">
-    <CustomChatWindowV3 Style="@currentStyle" StyleChanged="HandleStyleChanged" MinimizeChanged="HandleMinimizeChanged" />
+    <CustomChatWindowV3 @ref="chatWindowRef" Style="@currentStyle" StyleChanged="HandleStyleChanged" MinimizeChanged="HandleMinimizeChanged" />
 </div>
 
 @code {
     [SupplyParameterFromQuery]
     public string? Style { get; set; }
 
+    private CustomChatWindowV3? chatWindowRef;
     private ChatStyle currentStyle = ChatStyle.SidebarChat;
     private bool initializedFromQuery = false;
+    private DotNetObjectReference<ChatPreview>? dotNetRef;
 
     protected override void OnParametersSet()
     {
@@ -32,13 +35,39 @@
         }
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("initChatPreviewBridge", dotNetRef);
+            }
+            catch
+            {
+                // Ignore if JS not yet loaded
+            }
+        }
+    }
+
+    [JSInvokable]
+    public async Task TriggerReset()
+    {
+        if (chatWindowRef != null)
+        {
+            await chatWindowRef.RequestReset();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task HandleStyleChanged(ChatStyle newStyle)
     {
         currentStyle = newStyle;
         StateHasChanged();
         try
         {
-            await JSRuntime.InvokeVoidAsync("eval", $"window.parent.postMessage({{ type: 'conversa-chat-style', style: '{newStyle}' }}, '*')");
+            await JSRuntime.InvokeVoidAsync("postToParent", new { type = "conversa-chat-style", style = newStyle.ToString() });
         }
         catch
         {
@@ -50,12 +79,18 @@
     {
         try
         {
-            await JSRuntime.InvokeVoidAsync("eval", $"window.parent.postMessage({{ type: 'conversa-floating-minimized', isMinimized: {(isMinimized ? "true" : "false")} }}, '*')");
+            await JSRuntime.InvokeVoidAsync("postToParent", new { type = "conversa-floating-minimized", isMinimized });
         }
         catch
         {
             // Ignore if running outside iframe
         }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     // In-chat reset is handled internally by CustomChatWindowV3.ExecuteReset()

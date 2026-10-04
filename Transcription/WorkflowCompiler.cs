@@ -48,22 +48,21 @@ public static class WorkflowCompiler
     public static CompileResult CompileAndLoad(DiagramDocumentV2 document, string className = "MainConversation")
     {
         var csharp = JsonToCSharpTranscriber.Transcribe(document, className);
+        var wrapped = WrapStandaloneCSharp(csharp);
 
         try
         {
-            var genDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Topics", "Generated");
+            var genDir = GetGeneratedTopicsDirectory();
             if (!Directory.Exists(genDir))
             {
                 Directory.CreateDirectory(genDir);
             }
-            File.WriteAllText(Path.Combine(genDir, $"{className}.cs"), csharp);
+            File.WriteAllText(Path.Combine(genDir, $"{className}.cs"), wrapped);
         }
         catch
         {
             // Best-effort file disk sync
         }
-
-        var wrapped = "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.ComponentModel.DataAnnotations;\nusing System.Text.Json.Serialization;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + csharp + "\n}\n";
 
         var syntaxTree = CSharpSyntaxTree.ParseText(wrapped);
         var references = GetReferences();
@@ -120,7 +119,7 @@ public static class WorkflowCompiler
         }
 
         var sb = new System.Text.StringBuilder();
-        var genDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Topics", "Generated");
+        var genDir = GetGeneratedTopicsDirectory();
         try
         {
             if (!Directory.Exists(genDir))
@@ -137,7 +136,7 @@ public static class WorkflowCompiler
 
             try
             {
-                File.WriteAllText(Path.Combine(genDir, $"{cleanName}.cs"), csharp);
+                File.WriteAllText(Path.Combine(genDir, $"{cleanName}.cs"), WrapStandaloneCSharp(csharp));
             }
             catch { }
 
@@ -147,7 +146,7 @@ public static class WorkflowCompiler
         }
 
         var combinedCSharp = sb.ToString();
-        var wrapped = "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + combinedCSharp + "\n}\n";
+        var wrapped = WrapStandaloneCSharp(combinedCSharp);
 
         var syntaxTree = CSharpSyntaxTree.ParseText(wrapped);
         var references = GetReferences();
@@ -218,6 +217,27 @@ public static class WorkflowCompiler
     // (#41's own WorkflowCompilerTests.cs caught this). Force it the same
     // explicit way as ConversaCore, rather than depend on incidental
     // process state that happens to differ between hosts.
+    private static string WrapStandaloneCSharp(string csharp) =>
+        "#nullable enable\nusing System;\nusing System.Collections.Generic;\nusing System.Threading;\nusing System.Threading.Tasks;\nusing System.ComponentModel.DataAnnotations;\nusing System.Text.Json.Serialization;\nusing Microsoft.Extensions.Logging;\nusing Microsoft.Extensions.Logging.Abstractions;\nusing Microsoft.SemanticKernel;\nusing ConversaCore.TopicFlow;\nusing ConversaCore.TopicFlow.Activities;\nusing ConversaCore.Cards;\nusing ConversaCore.Tools;\nusing ConversaCore.Runtime;\nusing ConversaCore.Context;\n\nnamespace ScriptEditor.Generated\n{\n" + csharp + "\n}\n";
+
+    private static string GetGeneratedTopicsDirectory()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "ScriptEditor.sln")) && !File.Exists(Path.Combine(dir.FullName, "ScriptEditor.csproj")))
+        {
+            dir = dir.Parent;
+        }
+
+        if (dir != null)
+        {
+            var targetDir = File.Exists(Path.Combine(dir.FullName, "ScriptEditor.csproj")) ? dir.FullName : Path.Combine(dir.FullName, "ScriptEditor");
+            var topicDir = Directory.Exists(Path.Combine(dir.FullName, "Topics")) ? Path.Combine(dir.FullName, "Topics", "Generated") : Path.Combine(targetDir, "Topics", "Generated");
+            return topicDir;
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "Topics", "Generated");
+    }
+
     private static List<MetadataReference> GetReferences()
     {
         var loaded = AppDomain.CurrentDomain.GetAssemblies()

@@ -39,3 +39,8 @@ scratch/
 archive/
 wwwroot/_content/
 
+# Runtime generated topics
+Topics/Generated/*.cs
+!Topics/Generated/.gitkeep
+
+

@@ -40,6 +40,7 @@ export function ChatPreviewPanel({
   isActive = false,
 }: ChatPreviewPanelProps) {
   const [compileStatus, setCompileStatus] = useState<CompileStatus>({ kind: 'compiling' });
+  const [hasCompiledOnce, setHasCompiledOnce] = useState<boolean>(false);
   const [chatStyle, setChatStyle] = useState<ChatStyleMode>('SidebarChat');
   const [floatingMinimized, setFloatingMinimized] = useState<boolean>(false);
   const [runScope, setRunScope] = useState<ExecutionScope>('full');
@@ -50,6 +51,7 @@ export function ChatPreviewPanel({
   const activeTopic = topics.find((t) => t.id === activeTopicId) ?? initialTopic;
 
   const aliveRef = useRef(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -84,6 +86,17 @@ export function ChatPreviewPanel({
         if (!aliveRef.current) return;
         if (res.success) {
           setCompileStatus({ kind: 'success', typeName: res.generatedTypeName });
+          setHasCompiledOnce(true);
+          // Post run-topic message to the persistent preview iframe
+          if (iframeRef.current?.contentWindow) {
+            iframeRef.current.contentWindow.postMessage(
+              {
+                type: 'conversa-run-topic',
+                topicName: res.generatedTypeName,
+              },
+              '*'
+            );
+          }
         } else {
           setCompileStatus({ kind: 'error', diagnostics: res.diagnostics });
         }
@@ -134,7 +147,7 @@ export function ChatPreviewPanel({
     setHasPendingChanges(true);
   }, [document]);
 
-  const isFloating = chatStyle === 'FloatingChat' && compileStatus.kind === 'success';
+  const isFloating = chatStyle === 'FloatingChat' && hasCompiledOnce;
   const defaultWidth = chatStyle === 'ChatWindow' ? 620 : 380;
   const panelWidth = isFloating ? 0 : (dockedWidth ?? width ?? defaultWidth);
 
@@ -256,96 +269,95 @@ export function ChatPreviewPanel({
           }
         `}</style>
 
-        {/* Docked Content Body: Shows Spinner, Compile Errors, or the Live Blazor Chatbot */}
-        {!isFloating && (
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            {compileStatus.kind === 'compiling' && (
-              <div
-                data-testid="chat-compiling-loader"
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 16,
-                  padding: 24,
-                  background: '#f8fafc',
-                  textAlign: 'center',
-                }}
-              >
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    border: '3px solid #e2e8f0',
-                    borderTopColor: '#6264a7',
-                    borderRadius: '50%',
-                    animation: 'conversa-spin 0.85s linear infinite',
-                  }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1e1b4b' }}>
-                    Compiling Workflow…
-                  </div>
-                  <div style={{ fontSize: 11, color: '#64748b', maxWidth: 230, lineHeight: 1.4 }}>
-                    Roslyn is compiling topic classes and booting conversational runtime
-                  </div>
-                </div>
+        {/* Content Body: Loader (initial compile only) or Compile Errors */}
+        {!hasCompiledOnce && compileStatus.kind === 'compiling' && (
+          <div
+            data-testid="chat-compiling-loader"
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 16,
+              padding: 24,
+              background: '#f8fafc',
+              textAlign: 'center',
+            }}
+          >
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                border: '3px solid #e2e8f0',
+                borderTopColor: '#6264a7',
+                borderRadius: '50%',
+                animation: 'conversa-spin 0.85s linear infinite',
+              }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#1e1b4b' }}>
+                Compiling Workflow…
               </div>
-            )}
-
-            {(compileStatus.kind === 'error' || compileStatus.kind === 'network-error') && (
-              <div style={{ flex: 1, overflowY: 'auto', padding: 12, background: '#fafafa' }}>
-                <CompileErrorPanel status={compileStatus} />
+              <div style={{ fontSize: 11, color: '#64748b', maxWidth: 230, lineHeight: 1.4 }}>
+                Roslyn is compiling topic classes and booting conversational runtime
               </div>
-            )}
+            </div>
+          </div>
+        )}
 
-            {compileStatus.kind === 'success' && (
-              <iframe
-                src={`${API_BASE_URL}/preview-chat?style=${chatStyle}`}
-                title="ConversaCore.UI CustomChatWindowV3"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  border: 'none',
-                  flex: 1,
-                  background: 'transparent',
-                }}
-              />
-            )}
+        {(compileStatus.kind === 'error' || compileStatus.kind === 'network-error') && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: 12, background: '#fafafa' }}>
+            <CompileErrorPanel status={compileStatus} />
+          </div>
+        )}
+
+        {/* Single Persistent Iframe Container: transitions between Docked and Floating without unmounting */}
+        {hasCompiledOnce && (
+          <div
+            style={
+              isFloating
+                ? {
+                    position: 'fixed',
+                    bottom: 0,
+                    right: 0,
+                    zIndex: 9999,
+                    width: floatingMinimized ? 110 : 440,
+                    height: floatingMinimized ? 110 : 740,
+                    maxWidth: '100vw',
+                    maxHeight: '100vh',
+                    pointerEvents: 'auto',
+                    transition: 'width 0.25s ease, height 0.25s ease',
+                  }
+                : {
+                    flex: 1,
+                    minHeight: 0,
+                    width: '100%',
+                    height: '100%',
+                    display:
+                      compileStatus.kind === 'error' || compileStatus.kind === 'network-error'
+                        ? 'none'
+                        : 'flex',
+                    flexDirection: 'column',
+                    position: 'relative',
+                  }
+            }
+          >
+            <iframe
+              ref={iframeRef}
+              src={`${API_BASE_URL}/preview-chat?style=${chatStyle}`}
+              title="ConversaCore.UI CustomChatWindowV3"
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                flex: 1,
+                background: 'transparent',
+              }}
+            />
           </div>
         )}
       </aside>
-
-      {/* Floating Mode Overlay: floats Sofia at the bottom right corner of the window */}
-      {isFloating && compileStatus.kind === 'success' && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 0,
-            right: 0,
-            zIndex: 9999,
-            width: floatingMinimized ? 110 : 440,
-            height: floatingMinimized ? 110 : 740,
-            maxWidth: '100vw',
-            maxHeight: '100vh',
-            pointerEvents: 'auto',
-            transition: 'width 0.25s ease, height 0.25s ease',
-          }}
-        >
-          <iframe
-            src={`${API_BASE_URL}/preview-chat?style=FloatingChat`}
-            title="ConversaCore.UI CustomChatWindowV3 (Floating)"
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              background: 'transparent',
-            }}
-          />
-        </div>
-      )}
     </>
   );
 }

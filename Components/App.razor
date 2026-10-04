@@ -36,6 +36,26 @@
     <script src="_content/ConversaCore.UI/js/custom-adaptive-card-renderer.js"></script>
     <script src="_content/ConversaCore.UI/js/adaptive-cards-consolidated.js"></script>
     <script src="_content/ConversaCore.UI/js/chat-interop.js"></script>
+
+    <!-- ScriptEditor Chat Preview Bridge -->
+    <script>
+        window.postToParent = function (data) {
+            try {
+                window.parent.postMessage(data, '*');
+            } catch (e) { }
+        };
+        window.initChatPreviewBridge = function (dotNetHelper) {
+            window.__chatPreviewReceiver = function (event) {
+                if (event.data && typeof event.data === 'object') {
+                    if (event.data.type === 'conversa-run-topic' || event.data.type === 'conversa-trigger-reset') {
+                        dotNetHelper.invokeMethodAsync('TriggerReset');
+                    }
+                }
+            };
+            window.removeEventListener('message', window.__chatPreviewReceiver);
+            window.addEventListener('message', window.__chatPreviewReceiver);
+        };
+    </script>
 </body>
 
 </html>

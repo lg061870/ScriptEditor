@@ -4,7 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <DefaultItemExcludes>$(DefaultItemExcludes);ScriptEditor.Tests\**;canvas-app\**;spike\**;archive\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);ScriptEditor.Tests\**;canvas-app\**;spike\**;archive\**;Topics\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,6 +37,9 @@
     <Compile Remove="archive\**" />
     <Content Remove="archive\**" />
     <None Remove="archive\**" />
+    <Compile Remove="Topics\**" />
+    <Content Remove="Topics\**" />
+    <None Include="Topics\**" />
   </ItemGroup>
 
   <ItemGroup>
